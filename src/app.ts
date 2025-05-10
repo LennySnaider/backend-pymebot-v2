@@ -35,9 +35,9 @@ import { FlowService } from "./services/flowService";
 import { cleanAllSessions } from "./utils/cleanSessions";
 // import { preRenderCommonPhrases } from "./services/tts";  // Comentado temporalmente
 
-// Importamos los flujos
-import welcomeFlow from "./flows/welcome.flow.js";
-import infoFlow from "./flows/info.flow.js";
+// Los flujos predeterminados han sido desactivados para forzar el uso de plantillas configuradas
+// import welcomeFlow from "./flows/welcome.flow.js";
+// import infoFlow from "./flows/info.flow.js";
 
 // Aseguramos que existan los directorios necesarios
 [config.paths.sessions, config.paths.qr, config.paths.audio].forEach((dir) => {
@@ -181,7 +181,7 @@ const main = async () => {
 
         const dynamicFlow = await flowService.getFlowByTenant(tenantId);
         const adapterFlow = createFlow(
-          dynamicFlow ? [dynamicFlow] : [welcomeFlow, infoFlow]
+          dynamicFlow ? [dynamicFlow] : []
         );
 
         // IMPORTANTE: Creamos el bot y capturamos el valor de retorno

@@ -16,9 +16,9 @@ import {
   switchWhatsAppProvider,
 } from "../provider/providerFactory";
 
-// Importamos los flujos directamente (compatible con ESM)
-import welcomeFlow from "../flows/welcome.flow";
-import infoFlow from "../flows/info.flow";
+// Los flujos predeterminados han sido desactivados para forzar el uso de plantillas configuradas
+// import welcomeFlow from "../flows/welcome.flow";
+// import infoFlow from "../flows/info.flow";
 
 // Caché de instancias de bot por tenant
 const botInstances: Record<string, any> = {};
@@ -57,8 +57,8 @@ const getBotInstance = (tenantId: string, userId: string): any => {
   // Obtenemos el proveedor web personalizado
   const provider = getWebProvider(userId, tenantId);
 
-  // Creamos los flujos a utilizar
-  const flow = createFlow([welcomeFlow, infoFlow]);
+  // Creamos un flujo vacío ya que los flujos predeterminados han sido desactivados
+  const flow = createFlow([]);
 
   // Configuramos la base de datos con MemoryDB (compatible con keyPrefix)
   const database = new MemoryDB({
@@ -100,16 +100,15 @@ export const processMessage = async (
       `Procesando mensaje para usuario ${userId} de tenant ${tenantId}: "${text}"`
     );
 
-    // Obtenemos la instancia para este tenant
-    const bot = getBotInstance(tenantId, userId);
+    // Ahora que los flujos predeterminados están desactivados, retornamos un mensaje de error
+    // indicando que se debe usar una plantilla configurada
+    logger.warn("Se intentó procesar un mensaje sin plantilla configurada");
 
-    // Obtenemos el provider asociado
-    const provider = getWebProvider(userId, tenantId);
+    return {
+      text: "⚠️ ERROR: No se ha configurado ninguna plantilla de chatbot. Por favor, seleccione una plantilla válida para utilizar el servicio.",
+      tokensUsed: 0
+    };
 
-    // Procesamos el mensaje
-    const response = await provider.handleIncomingMessage(text);
-
-    return response;
   } catch (error) {
     logger.error("Error al procesar mensaje con BuilderBot:", error);
     throw new Error(
