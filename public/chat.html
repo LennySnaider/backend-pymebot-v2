@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PYMEBOT Chat</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #4168e0;
+            --primary-dark: #3551b3;
+            --primary-light: #c3d1ff;
+            --secondary-color: #e1e8ff;
+            --light-bg: #f8f9fa;
+            --dark-bg: #1e293b;
+            --light-text: #f8fafc;
+            --dark-text: #1e293b;
+            --error-color: #f87171;
+            --success-color: #34d399;
+            --warning-color: #fbbf24;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background-color: var(--light-bg);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .chat-container {
+            max-width: 600px;
+            width: 100%;
+            height: 600px;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.1);
+            position: relative;
+            background-color: white;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-header {
+            background-color: var(--primary-color);
+            color: var(--light-text);
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .assistant-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background-color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 12px;
+        }
+
+        .chat-body {
+            background-color: white;
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+        }
+
+        .chat-input {
+            background-color: white;
+            border-top: 1px solid #f0f0f0;
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            height: 60px;
+        }
+
+        .template-selector {
+            background-color: #f8f9fa;
+            border-bottom: 1px solid #f0f0f0;
+            padding: 10px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .template-select {
+            padding: 6px 10px;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+            background-color: white;
+            font-size: 14px;
+            min-width: 200px;
+        }
+
+        .config-button {
+            display: flex;
+            align-items: center;
+            padding: 6px 12px;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            gap: 6px;
+        }
+
+        .config-button:hover {
+            background-color: var(--primary-dark);
+        }
+
+        .message {
+            max-width: 85%;
+            margin-bottom: 16px;
+            padding: 14px 16px;
+            border-radius: 18px;
+            position: relative;
+            animation: fadeIn 0.3s ease-in-out;
+            line-height: 1.4;
+            font-size: 15px;
+        }
+
+        .user-message {
+            background-color: var(--secondary-color);
+            color: var(--dark-text);
+            margin-left: auto;
+            border-radius: 18px;
+        }
+
+        .bot-message {
+            background-color: #f0f0f0;
+            color: var(--dark-text);
+            margin-right: auto;
+            border-radius: 18px;
+        }
+
+        .error-message {
+            background-color: #fcf0f0;
+            color: #712b29;
+            margin-right: auto;
+            border-radius: 18px;
+            border-left: 3px solid var(--error-color);
+        }
+
+        .system-message {
+            background-color: #f5f5f5;
+            color: #666;
+            margin: 10px auto;
+            border-radius: 10px;
+            padding: 8px 12px;
+            font-size: 13px;
+            text-align: center;
+            max-width: 80%;
+        }
+
+        .token-info {
+            font-size: 11px;
+            color: #888;
+            text-align: right;
+            margin-top: 4px;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal-content {
+            background-color: white;
+            border-radius: 8px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow: auto;
+            padding: 0;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        }
+
+        .modal-header {
+            padding: 15px 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            font-size: 18px;
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .modal-footer {
+            padding: 15px 20px;
+            border-top: 1px solid #eee;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .template-item {
+            border: 1px solid #eee;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .template-info {
+            flex: 1;
+        }
+
+        .template-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .template-description {
+            font-size: 13px;
+            color: #666;
+        }
+
+        .template-tokens {
+            font-size: 12px;
+            color: #888;
+            margin-top: 4px;
+        }
+
+        .template-toggle {
+            margin-left: 16px;
+        }
+
+        .switch-toggle {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 24px;
+        }
+
+        .switch-toggle input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 24px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: var(--primary-color);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+
+        .input-text {
+            flex: 1;
+            border: none;
+            border-radius: 20px;
+            padding: 10px 16px;
+            background-color: #f3f4f6;
+            margin-right: 12px;
+            outline: none;
+            font-size: 15px;
+        }
+
+        .send-button {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background-color: var(--primary-color);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
+        }
+
+        .send-button:hover {
+            background-color: var(--primary-dark);
+        }
+
+        .send-button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        .typing-indicator {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            border-radius: 18px;
+            background-color: #f3f4f6;
+            margin-bottom: 16px;
+            width: fit-content;
+        }
+
+        .typing-bubble {
+            height: 8px;
+            width: 8px;
+            border-radius: 50%;
+            background-color: #93a3af;
+            margin: 0 2px;
+            opacity: 0.6;
+        }
+
+        .typing-bubble:nth-child(1) {
+            animation: bubbleBounce 1s infinite 0.2s;
+        }
+
+        .typing-bubble:nth-child(2) {
+            animation: bubbleBounce 1s infinite 0.4s;
+        }
+
+        .typing-bubble:nth-child(3) {
+            animation: bubbleBounce 1s infinite 0.6s;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
+        }
+
+        .btn-primary {
+            background-color: var(--primary-color);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: var(--primary-dark);
+        }
+
+        .btn-secondary {
+            background-color: #f3f4f6;
+            color: #4b5563;
+        }
+
+        .btn-secondary:hover {
+            background-color: #e5e7eb;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 20px;
+            color: #6b7280;
+            font-size: 14px;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes bubbleBounce {
+            0%, 100% {
+                transform: translateY(0);
+            }
+            50% {
+                transform: translateY(-4px);
+            }
+        }
+
+        @media (max-width: 640px) {
+            .chat-container {
+                max-width: 100%;
+                height: 90vh;
+                border-radius: 0;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="mx-auto w-full max-w-4xl">
+        <!-- Chat Container -->
+        <div class="chat-container mx-auto bg-white">
+            <!-- Chat Header -->
+            <div class="chat-header">
+                <div class="flex items-center">
+                    <div class="assistant-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 5C13.66 5 15 6.34 15 8C15 9.66 13.66 11 12 11C10.34 11 9 9.66 9 8C9 6.34 10.34 5 12 5ZM12 19.2C9.5 19.2 7.29 17.92 6 15.98C6.03 13.99 10 12.9 12 12.9C13.99 12.9 17.97 13.99 18 15.98C16.71 17.92 14.5 19.2 12 19.2Z" fill="#4168e0"/>
+                        </svg>
+                    </div>
+                    <h1 class="text-lg font-semibold">PYMEBOT Chat</h1>
+                </div>
+                <div>
+                    <button id="settings-toggle" class="focus:outline-none">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Template Selector -->
+            <div id="template-selector" class="template-selector">
+                <div class="flex items-center">
+                    <label for="template-select" class="mr-2 font-medium text-sm">Plantilla:</label>
+                    <select id="template-select" class="template-select">
+                        <option value="">Seleccionar plantilla...</option>
+                        <!-- Las opciones se cargarán dinámicamente -->
+                    </select>
+                    <div id="loading-templates" class="ml-2 text-sm text-gray-500 hidden">Cargando...</div>
+                </div>
+                <button id="config-templates" class="config-button">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                    Configurar
+                </button>
+            </div>
+
+            <!-- Chat Body -->
+            <div id="chat-body" class="chat-body">
+                <div id="welcome-message" class="message bot-message">
+                    <p>👋 ¡Hola! Soy PYMEBOT, tu asistente virtual. ¿En qué puedo ayudarte hoy?</p>
+                </div>
+            </div>
+
+            <!-- Chat Input -->
+            <div class="chat-input">
+                <input type="text" id="text-input" class="input-text" placeholder="Escribe un mensaje...">
+                <button id="send-button" class="send-button">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Templates Configuration Modal -->
+        <div id="templates-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Configuración de Plantillas</h3>
+                    <button id="close-modal" class="text-gray-500 hover:text-gray-700">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-gray-600 mb-4">Activa o desactiva las plantillas que deseas utilizar en tu chat.</p>
+                    
+                    <div id="templates-list" class="mt-4">
+                        <!-- Las plantillas se cargarán dinámicamente -->
+                        <div class="flex justify-center">
+                            <div class="typing-indicator">
+                                <div class="typing-bubble"></div>
+                                <div class="typing-bubble"></div>
+                                <div class="typing-bubble"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="close-modal-btn" class="btn btn-secondary">Cerrar</button>
+                </div>
+            </div>
+        </div>
+
+        <footer class="footer">
+            <p>PYMEBOT - Desarrollado con tecnología avanzada de IA</p>
+        </footer>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            // Elements
+            const chatBody = document.getElementById('chat-body');
+            const textInput = document.getElementById('text-input');
+            const sendButton = document.getElementById('send-button');
+            const settingsToggle = document.getElementById('settings-toggle');
+            const templateSelect = document.getElementById('template-select');
+            const configTemplatesBtn = document.getElementById('config-templates');
+            const templatesModal = document.getElementById('templates-modal');
+            const closeModalBtn = document.getElementById('close-modal');
+            const closeModalFooterBtn = document.getElementById('close-modal-btn');
+            const templatesList = document.getElementById('templates-list');
+            const loadingTemplates = document.getElementById('loading-templates');
+
+            // State
+            let isWaitingForResponse = false;
+            let selectedTemplateId = '';
+            let templates = [];
+            let sessionId = `session-${Date.now()}`;
+            let totalTokensUsed = 0;
+
+            // Config
+            const config = {
+                apiBaseUrl: '', // Vacío usará el origen actual
+                userId: 'user-' + Math.random().toString(36).substring(2, 10),
+                tenantId: 'default',
+            };
+
+            // Inicialización
+            init();
+
+            // Event Listeners
+            textInput.addEventListener('keypress', handleTextInput);
+            sendButton.addEventListener('click', handleSendClick);
+            templateSelect.addEventListener('change', handleTemplateChange);
+            configTemplatesBtn.addEventListener('click', openTemplatesModal);
+            closeModalBtn.addEventListener('click', closeTemplatesModal);
+            closeModalFooterBtn.addEventListener('click', closeTemplatesModal);
+
+            /**
+             * Inicializa la aplicación
+             */
+            function init() {
+                // Cargar plantillas disponibles
+                fetchTemplates();
+            }
+
+            /**
+             * Obtiene la URL base para las API
+             * @returns {string} URL base
+             */
+            function getApiBaseUrl() {
+                if (config.apiBaseUrl) return config.apiBaseUrl;
+
+                // Si estamos abriendo el archivo directamente (file://)
+                if (window.location.protocol === 'file:') {
+                    // Usar localhost con el puerto configurado
+                    return 'http://localhost:3090';
+                }
+
+                return window.location.origin;
+            }
+
+            /**
+             * Maneja el evento de tecla enter en el input
+             * @param {KeyboardEvent} e Evento de teclado
+             */
+            function handleTextInput(e) {
+                if (e.key === 'Enter') {
+                    handleSendClick();
+                }
+            }
+
+            /**
+             * Maneja el clic en el botón de enviar
+             */
+            function handleSendClick() {
+                const text = textInput.value.trim();
+                if (text && !isWaitingForResponse) {
+                    sendTextMessage(text);
+                    textInput.value = '';
+                }
+            }
+
+            /**
+             * Maneja el cambio de plantilla seleccionada
+             */
+            function handleTemplateChange() {
+                selectedTemplateId = templateSelect.value;
+                
+                // Si se seleccionó una plantilla, mostramos mensaje informativo
+                if (selectedTemplateId) {
+                    const selectedTemplate = templates.find(t => t.id === selectedTemplateId);
+                    if (selectedTemplate) {
+                        addSystemMessage(`Plantilla "${selectedTemplate.name}" seleccionada. Estimación de uso: ${selectedTemplate.tokensEstimated} tokens por mensaje.`);
+                    }
+                }
+            }
+
+            /**
+             * Abre el modal de configuración de plantillas
+             */
+            function openTemplatesModal() {
+                templatesModal.style.display = 'flex';
+                renderTemplatesList();
+            }
+
+            /**
+             * Cierra el modal de configuración de plantillas
+             */
+            function closeTemplatesModal() {
+                templatesModal.style.display = 'none';
+            }
+
+            /**
+             * Obtiene las plantillas disponibles desde la API
+             */
+            async function fetchTemplates() {
+                try {
+                    loadingTemplates.classList.remove('hidden');
+                    templateSelect.disabled = true;
+                    
+                    const apiUrl = `${getApiBaseUrl()}/api/text/templates?tenant_id=${config.tenantId}`;
+                    
+                    const response = await fetch(apiUrl);
+                    
+                    if (!response.ok) {
+                        throw new Error(`Error al obtener plantillas: ${response.statusText}`);
+                    }
+                    
+                    const result = await response.json();
+                    
+                    if (result.success && Array.isArray(result.templates)) {
+                        templates = result.templates;
+                        updateTemplateSelector();
+                    } else {
+                        console.error('Formato de respuesta inválido:', result);
+                        addErrorMessage('No se pudieron cargar las plantillas disponibles.');
+                    }
+                } catch (error) {
+                    console.error('Error al obtener plantillas:', error);
+                    addErrorMessage('Error al cargar plantillas. Por favor, intenta de nuevo más tarde.');
+                } finally {
+                    loadingTemplates.classList.add('hidden');
+                    templateSelect.disabled = false;
+                }
+            }
+
+            /**
+             * Actualiza el selector de plantillas con las plantillas disponibles
+             */
+            function updateTemplateSelector() {
+                // Mantener la opción default
+                const defaultOption = templateSelect.querySelector('option[value=""]');
+                templateSelect.innerHTML = '';
+                
+                if (defaultOption) {
+                    templateSelect.appendChild(defaultOption);
+                }
+                
+                // Ordenar plantillas por nombre
+                const sortedTemplates = [...templates].sort((a, b) => a.name.localeCompare(b.name));
+                
+                // Añadir plantillas disponibles
+                sortedTemplates.forEach(template => {
+                    const option = document.createElement('option');
+                    option.value = template.id;
+                    option.textContent = template.name;
+                    
+                    // Añadir atributo data-tokens para mostrar info de tokens
+                    if (template.tokensEstimated) {
+                        option.setAttribute('data-tokens', template.tokensEstimated);
+                    }
+                    
+                    templateSelect.appendChild(option);
+                });
+            }
+
+            /**
+             * Renderiza la lista de plantillas en el modal de configuración
+             */
+            function renderTemplatesList() {
+                templatesList.innerHTML = '';
+                
+                if (templates.length === 0) {
+                    templatesList.innerHTML = '<p class="text-center text-gray-500">No hay plantillas disponibles.</p>';
+                    return;
+                }
+                
+                // Ordenar plantillas por nombre
+                const sortedTemplates = [...templates].sort((a, b) => a.name.localeCompare(b.name));
+                
+                // Crear elementos para cada plantilla
+                sortedTemplates.forEach(template => {
+                    const templateItem = document.createElement('div');
+                    templateItem.className = 'template-item';
+                    
+                    const templateInfo = document.createElement('div');
+                    templateInfo.className = 'template-info';
+                    
+                    const templateName = document.createElement('div');
+                    templateName.className = 'template-name';
+                    templateName.textContent = template.name;
+                    
+                    const templateDescription = document.createElement('div');
+                    templateDescription.className = 'template-description';
+                    templateDescription.textContent = template.description || 'Sin descripción';
+                    
+                    const templateTokens = document.createElement('div');
+                    templateTokens.className = 'template-tokens';
+                    templateTokens.textContent = `Tokens estimados: ${template.tokensEstimated || 'No disponible'}`;
+                    
+                    templateInfo.appendChild(templateName);
+                    templateInfo.appendChild(templateDescription);
+                    templateInfo.appendChild(templateTokens);
+                    
+                    // Toggle switch para activar/desactivar
+                    const templateToggle = document.createElement('div');
+                    templateToggle.className = 'template-toggle';
+                    
+                    const switchLabel = document.createElement('label');
+                    switchLabel.className = 'switch-toggle';
+                    
+                    const switchInput = document.createElement('input');
+                    switchInput.type = 'checkbox';
+                    switchInput.checked = template.isActive;
+                    switchInput.dataset.templateId = template.id;
+                    
+                    // Evento para activar/desactivar plantilla
+                    switchInput.addEventListener('change', function() {
+                        toggleTemplateStatus(template.id, this.checked);
+                    });
+                    
+                    const sliderSpan = document.createElement('span');
+                    sliderSpan.className = 'slider';
+                    
+                    switchLabel.appendChild(switchInput);
+                    switchLabel.appendChild(sliderSpan);
+                    templateToggle.appendChild(switchLabel);
+                    
+                    templateItem.appendChild(templateInfo);
+                    templateItem.appendChild(templateToggle);
+                    
+                    templatesList.appendChild(templateItem);
+                });
+            }
+
+            /**
+             * Activa o desactiva una plantilla
+             * @param {string} templateId ID de la plantilla
+             * @param {boolean} isActive Estado a establecer
+             */
+            async function toggleTemplateStatus(templateId, isActive) {
+                try {
+                    const apiUrl = `${getApiBaseUrl()}/api/text/templates/${templateId}/status`;
+                    
+                    const response = await fetch(apiUrl, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            tenant_id: config.tenantId,
+                            is_active: isActive
+                        }),
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`Error al cambiar estado de plantilla: ${response.statusText}`);
+                    }
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        // Actualizar estado local
+                        const templateIndex = templates.findIndex(t => t.id === templateId);
+                        if (templateIndex !== -1) {
+                            templates[templateIndex].isActive = isActive;
+                        }
+                        
+                        // Mostrar mensaje de éxito
+                        const template = templates.find(t => t.id === templateId);
+                        addSystemMessage(`Plantilla "${template?.name}" ${isActive ? 'activada' : 'desactivada'} correctamente.`);
+                        
+                        // Actualizar selector
+                        updateTemplateSelector();
+                    } else {
+                        console.error('Error al cambiar estado de plantilla:', result);
+                        addErrorMessage('No se pudo cambiar el estado de la plantilla.');
+                    }
+                } catch (error) {
+                    console.error('Error al cambiar estado de plantilla:', error);
+                    addErrorMessage('Error al cambiar estado de la plantilla.');
+                }
+            }
+
+            /**
+             * Envía un mensaje de texto al servidor
+             * @param {string} text Texto del mensaje
+             */
+            async function sendTextMessage(text) {
+                if (!text || isWaitingForResponse) return;
+
+                // Añadir mensaje a la conversación
+                addMessage(text, true);
+                
+                // Mostrar indicador de escritura
+                addTypingIndicator();
+                isWaitingForResponse = true;
+                
+                try {
+                    // Preparar datos para la API
+                    const apiUrl = `${getApiBaseUrl()}/api/text/chat`;
+                    const requestData = {
+                        text,
+                        user_id: config.userId,
+                        tenant_id: config.tenantId,
+                        session_id: sessionId
+                    };
+                    
+                    // Si hay una plantilla seleccionada, la incluimos
+                    if (selectedTemplateId) {
+                        requestData.template_id = selectedTemplateId;
+                    }
+                    
+                    // Enviar petición
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(requestData)
+                    });
+                    
+                    // Quitar indicador de escritura
+                    removeTypingIndicator();
+                    
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(`Error ${response.status}: ${errorText}`);
+                    }
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        // Añadir respuesta a la conversación
+                        addMessage(result.response, false, result.tokens_used);
+                        
+                        // Actualizar contador total de tokens
+                        if (result.tokens_used) {
+                            totalTokensUsed += result.tokens_used;
+                            updateTokensCounter();
+                        }
+                    } else {
+                        addErrorMessage('Error al procesar el mensaje: ' + (result.error || 'Error desconocido'));
+                    }
+                } catch (error) {
+                    console.error('Error al enviar mensaje:', error);
+                    removeTypingIndicator();
+                    addErrorMessage('Error al enviar mensaje: ' + error.message);
+                } finally {
+                    isWaitingForResponse = false;
+                }
+            }
+
+            /**
+             * Actualiza el contador de tokens en la interfaz
+             */
+            function updateTokensCounter() {
+                // Implementación futura: podría mostrar un contador global en la interfaz
+                console.log(`Total de tokens utilizados: ${totalTokensUsed}`);
+            }
+
+            /**
+             * Añade un mensaje a la conversación
+             * @param {string} text Texto del mensaje
+             * @param {boolean} isUser Si es un mensaje del usuario
+             * @param {number} tokensUsed Tokens utilizados (opcional)
+             */
+            function addMessage(text, isUser, tokensUsed) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
+                
+                const textP = document.createElement('p');
+                textP.textContent = text;
+                messageDiv.appendChild(textP);
+                
+                // Si hay información de tokens, la mostramos
+                if (!isUser && tokensUsed) {
+                    const tokenInfo = document.createElement('div');
+                    tokenInfo.className = 'token-info';
+                    tokenInfo.textContent = `${tokensUsed} tokens`;
+                    messageDiv.appendChild(tokenInfo);
+                }
+                
+                chatBody.appendChild(messageDiv);
+                scrollToBottom();
+            }
+
+            /**
+             * Añade un mensaje de sistema a la conversación
+             * @param {string} text Texto del mensaje
+             */
+            function addSystemMessage(text) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'system-message';
+                messageDiv.textContent = text;
+                
+                chatBody.appendChild(messageDiv);
+                scrollToBottom();
+            }
+
+            /**
+             * Añade un mensaje de error a la conversación
+             * @param {string} text Texto del error
+             */
+            function addErrorMessage(text) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message error-message';
+                
+                const textP = document.createElement('p');
+                textP.textContent = text;
+                messageDiv.appendChild(textP);
+                
+                chatBody.appendChild(messageDiv);
+                scrollToBottom();
+            }
+
+            /**
+             * Añade un indicador de escritura
+             */
+            function addTypingIndicator() {
+                removeTypingIndicator(); // Eliminamos si ya existe
+                
+                const typingDiv = document.createElement('div');
+                typingDiv.id = 'typing-indicator';
+                typingDiv.className = 'typing-indicator';
+                
+                for (let i = 0; i < 3; i++) {
+                    const bubble = document.createElement('div');
+                    bubble.className = 'typing-bubble';
+                    typingDiv.appendChild(bubble);
+                }
+                
+                chatBody.appendChild(typingDiv);
+                scrollToBottom();
+            }
+
+            /**
+             * Elimina el indicador de escritura
+             */
+            function removeTypingIndicator() {
+                const typingIndicator = document.getElementById('typing-indicator');
+                if (typingIndicator) {
+                    typingIndicator.remove();
+                }
+            }
+
+            /**
+             * Hace scroll al fondo del chat
+             */
+            function scrollToBottom() {
+                chatBody.scrollTop = chatBody.scrollHeight;
+            }
+        });
+    </script>
+</body>
+
+</html>

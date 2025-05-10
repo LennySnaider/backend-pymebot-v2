@@ -1,0 +1,32 @@
+# Node modules
+node_modules/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Environment variables
+.env
+.env.local
+.mcp.json
+
+# Dependency directories
+bower_components/
+jspm_packages/
+
+# IDE files
+.vscode/
+.idea/
+
+# Build and cache files
+dist/
+build/
+.cache/
+.DS_Store
+
+#Archivos de audio
+assets/audio/
+
+# Ignorar todos los archivos en bot_sessions/
+bot_sessions/*

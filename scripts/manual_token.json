@@ -1,0 +1,10 @@
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyLXRlc3QtaWQiLCJlbWFpbCI6InRlc3RAZXhhbXBsZS5jb20iLCJyb2xlIjoic3VwZXJfYWRtaW4iLCJ0ZW5hbnRfaWQiOiJ0ZXN0LXRlbmFudCIsImlhdCI6MTc0NTk1MTUwNCwiZXhwIjoxNzQ2MDM3OTA0LCJpc3MiOiJzdXBhYmFzZSIsImp0aSI6IjUxZjI4ZWFjN2RhYzk1YWE4ODZjMWVjMjcwNDViNGZjIn0.emlK8cuyvBdRAhWankTbryfNmfBQYuvW322Q4dF42f0",
+  "refresh_token": null,
+  "user_id": "user-test-id",
+  "email": "test@example.com",
+  "role": "super_admin",
+  "tenant_id": "test-tenant",
+  "expires_at": "2025-04-30T18:31:44.000Z",
+  "note": "Este es un token creado manualmente para pruebas, NO es un token de Supabase real"
+}

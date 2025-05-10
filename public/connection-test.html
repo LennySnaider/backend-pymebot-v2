@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connection Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        .test-section {
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        input[type="text"] {
+            padding: 8px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 300px;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+            white-space: pre-wrap;
+            overflow-x: auto;
+        }
+        .success {
+            color: green;
+        }
+        .error {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>API Connection Test</h1>
+        <p>Esta página permite probar la conexión con la API del backend sin necesidad de utilizar la aplicación completa.</p>
+
+        <div class="test-section">
+            <h2>Ping Test</h2>
+            <button onclick="testPing()">Test Ping</button>
+            <div id="ping-result" class="result"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>CORS Test</h2>
+            <button onclick="testCORS()">Test CORS</button>
+            <div id="cors-result" class="result"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>GET Chat Test</h2>
+            <div>
+                <input type="text" id="get-message" placeholder="Mensaje para enviar por GET">
+                <button onclick="testGetChat()">Enviar GET</button>
+            </div>
+            <div id="get-result" class="result"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>POST Chat Test</h2>
+            <div>
+                <input type="text" id="post-message" placeholder="Mensaje para enviar por POST">
+                <button onclick="testPostChat()">Enviar POST</button>
+            </div>
+            <div id="post-result" class="result"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>Connection Details</h2>
+            <button onclick="testDetails()">Get Details</button>
+            <div id="details-result" class="result"></div>
+        </div>
+    </div>
+
+    <script>
+        const BASE_URL = 'http://localhost:3090';
+
+        // Función para formatear JSON bonito
+        function formatJSON(obj) {
+            return JSON.stringify(obj, null, 2);
+        }
+
+        // Prueba de ping
+        async function testPing() {
+            const resultElement = document.getElementById('ping-result');
+            resultElement.innerHTML = 'Enviando ping...';
+            resultElement.className = 'result';
+
+            try {
+                const response = await fetch(`${BASE_URL}/api/connection-test/ping`);
+                const data = await response.json();
+                resultElement.innerHTML = `<span class="success">✓ Ping exitoso</span>\n${formatJSON(data)}`;
+            } catch (error) {
+                resultElement.innerHTML = `<span class="error">✗ Error de ping: ${error.message}</span>`;
+                resultElement.className = 'result error';
+            }
+        }
+
+        // Prueba de CORS
+        async function testCORS() {
+            const resultElement = document.getElementById('cors-result');
+            resultElement.innerHTML = 'Comprobando CORS...';
+            resultElement.className = 'result';
+
+            try {
+                const response = await fetch(`${BASE_URL}/cors-test`);
+                const data = await response.json();
+                resultElement.innerHTML = `<span class="success">✓ CORS configurado correctamente</span>\n${formatJSON(data)}`;
+            } catch (error) {
+                resultElement.innerHTML = `<span class="error">✗ Error de CORS: ${error.message}</span>`;
+                resultElement.className = 'result error';
+            }
+        }
+
+        // Prueba de chat con GET
+        async function testGetChat() {
+            const resultElement = document.getElementById('get-result');
+            const message = document.getElementById('get-message').value || 'Mensaje de prueba';
+            
+            resultElement.innerHTML = 'Enviando mensaje por GET...';
+            resultElement.className = 'result';
+
+            try {
+                const url = new URL(`${BASE_URL}/api/text/chat-get`);
+                url.searchParams.append('text', message);
+                url.searchParams.append('user_id', 'test-user-browser');
+                url.searchParams.append('session_id', `test-session-${Date.now()}`);
+                
+                const response = await fetch(url);
+                const data = await response.json();
+                resultElement.innerHTML = `<span class="success">✓ GET exitoso</span>\n${formatJSON(data)}`;
+            } catch (error) {
+                resultElement.innerHTML = `<span class="error">✗ Error en GET: ${error.message}</span>`;
+                resultElement.className = 'result error';
+            }
+        }
+
+        // Prueba de chat con POST
+        async function testPostChat() {
+            const resultElement = document.getElementById('post-result');
+            const message = document.getElementById('post-message').value || 'Mensaje de prueba';
+            
+            resultElement.innerHTML = 'Enviando mensaje por POST...';
+            resultElement.className = 'result';
+
+            try {
+                const response = await fetch(`${BASE_URL}/api/text/chat-test`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        text: message,
+                        user_id: 'test-user-browser',
+                        session_id: `test-session-${Date.now()}`
+                    })
+                });
+                const data = await response.json();
+                resultElement.innerHTML = `<span class="success">✓ POST exitoso</span>\n${formatJSON(data)}`;
+            } catch (error) {
+                resultElement.innerHTML = `<span class="error">✗ Error en POST: ${error.message}</span>`;
+                resultElement.className = 'result error';
+            }
+        }
+
+        // Prueba de detalles de conexión
+        async function testDetails() {
+            const resultElement = document.getElementById('details-result');
+            resultElement.innerHTML = 'Obteniendo detalles...';
+            resultElement.className = 'result';
+
+            try {
+                const response = await fetch(`${BASE_URL}/api/connection-test/detailed`);
+                const data = await response.json();
+                resultElement.innerHTML = `<span class="success">✓ Detalles obtenidos</span>\n${formatJSON(data)}`;
+            } catch (error) {
+                resultElement.innerHTML = `<span class="error">✗ Error obteniendo detalles: ${error.message}</span>`;
+                resultElement.className = 'result error';
+            }
+        }
+    </script>
+</body>
+</html>
