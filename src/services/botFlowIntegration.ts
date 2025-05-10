@@ -181,17 +181,17 @@ export const processMessageWithFlows = async (
             }
           }
 
-          // Si aún no tenemos un mensaje, recurrimos a un default como último recurso
+          // Si aún no tenemos un mensaje, mostrar un mensaje de error claro
           if (!greeting) {
-            // Mensaje por defecto con formato adecuado y más amigable
-            greeting = "👋 Hola, bienvenido. ¿En qué puedo ayudarte hoy?";
-            logger.info(`⚠️ No se encontró ningún mensaje en la plantilla. Usando mensaje por defecto: "${greeting}"`);
+            // Mensaje de error indicando que no se pudo cargar la plantilla correctamente
+            greeting = "⚠️ ERROR: No se pudo cargar el mensaje de bienvenida de la plantilla. Por favor, contacte al administrador o seleccione otra plantilla.";
+            logger.error(`⚠️ No se encontró ningún mensaje en la plantilla. Se mostrará mensaje de error.`);
           }
         } catch (extractError) {
           logger.error(`❌ ERROR al extraer mensaje de plantilla: ${extractError}`);
-          // Mensaje por defecto en caso de error, evitando mensajes muy específicos
-          greeting = "👋 Hola, bienvenido. ¿En qué puedo ayudarte hoy?";
-          logger.info(`Usando mensaje por defecto debido a error: "${greeting}"`);
+          // Mensaje de error en caso de excepción
+          greeting = "⚠️ ERROR: Ocurrió un problema al cargar la plantilla. Por favor, contacte al administrador del sistema o seleccione otra plantilla.";
+          logger.error(`Se mostrará mensaje de error debido a excepción al cargar plantilla`);
         }
 
         // Intentamos obtener el flujo activo para el tenant para usar el nodo de entrada correcto
