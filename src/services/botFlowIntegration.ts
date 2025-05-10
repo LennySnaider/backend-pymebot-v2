@@ -279,7 +279,7 @@ export const processMessageWithFlows = async (
   } catch (error) {
     logger.error("Error al procesar mensaje con flujos dinámicos:", error);
     return {
-      text: "Lo siento, ocurrió un error al procesar tu mensaje.",
+      text: "⚠️ ERROR: No se pudo procesar el mensaje. Verifique que la plantilla seleccionada sea válida y esté correctamente configurada.",
       tokensUsed: 10 // Valor nominal mínimo para errores
     };
   }
