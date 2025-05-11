@@ -29,6 +29,7 @@ import adminRouter from "./api/admin"; // Router para funciones administrativas
 import templatesDiagnosticRouter from "./api/templates-diagnostic"; // Router para diagnóstico de plantillas
 import systemRouter from "./api/system"; // Router para información del sistema
 import connectionTestRouter from "./api/connection-test"; // Router para pruebas de conexión
+import builderbotRouter from "./api/builderbot-integration"; // Importamos router de integración con BuilderBot
 import logger from "./utils/logger";
 import { initWhatsAppProvider } from "./provider/whatsappProvider";
 import { FlowService } from "./services/flowService";
@@ -153,6 +154,7 @@ app.use("/api/admin", adminRouter); // Registramos el router administrativo
 app.use("/api/templates-diagnostic", templatesDiagnosticRouter); // Registramos el router de diagnóstico de plantillas
 app.use("/api/system", systemRouter); // Registramos el router de información del sistema
 app.use("/api/connection-test", connectionTestRouter); // Registramos el router de prueba de conexión
+app.use("/api/builderbot", builderbotRouter); // Registramos el router de integración con BuilderBot
 
 // Inicialización de la aplicación
 const main = async () => {
@@ -236,6 +238,7 @@ const main = async () => {
       logger.info(`[API Templates Diagnostic]: ${serverUrl}/api/templates-diagnostic`);
       logger.info(`[API System]: ${serverUrl}/api/system`);
       logger.info(`[API Connection Test]: ${serverUrl}/api/connection-test`);
+      logger.info(`[API BuilderBot]: ${serverUrl}/api/builderbot`);
       logger.info(`[CORS Test]: ${serverUrl}/cors-test`);
 
       if (config.whatsapp.enabled) {

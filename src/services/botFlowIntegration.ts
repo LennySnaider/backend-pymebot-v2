@@ -12,6 +12,7 @@ import { FlowService } from "./flowService";
 import { FlowState } from "../models/flow.types";
 import logger from "../utils/logger";
 import config from "../config";
+import { processFlowMessage } from "./flowRegistry";
 
 // Estructura para respuestas con metadatos
 export interface FlowResponse {
@@ -23,7 +24,8 @@ export interface FlowResponse {
 const flowService = new FlowService();
 
 // Caché de estados de flujos dinámicos por usuario y tenant
-const flowStates: Record<string, FlowState> = {};
+// Exportamos para poder compartir entre módulos
+export const flowStates: Record<string, FlowState> = {};
 
 /**
  * Procesa un mensaje con el sistema de flujos dinámicos
@@ -42,9 +44,70 @@ export const processMessageWithFlows = async (
   templateConfig?: Record<string, any>
 ): Promise<FlowResponse | string> => {
   try {
-  // Garantizar que tenantId sea siempre un UUID válido
-  const validTenantId = tenantId === "default" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId) ?
-    (config.multitenant.defaultTenantUuid || "00000000-0000-0000-0000-000000000000") : tenantId;
+    // Intentar procesar con BuilderBot si la función está disponible
+    if (typeof processFlowMessage === 'function' && templateConfig?.id) {
+      try {
+        logger.info(`Intentando procesar mensaje con BuilderBot (templateId: ${templateConfig.id})`);
+        const result = await processFlowMessage(
+          message,
+          userId,
+          sessionId,
+          tenantId,
+          templateConfig.id
+        );
+
+        if (result) {
+          logger.info(`Mensaje procesado exitosamente con BuilderBot`);
+
+          // Verificamos si la respuesta tiene los campos correctos
+          // y los transformamos al formato esperado por el controlador API
+
+          // Extraer la respuesta evitando el texto genérico "Mensaje procesado"
+          let responseText = "Respuesta del asistente";
+
+          // Priorizar la respuesta específica si está disponible
+          if (result.response && result.response !== "Mensaje procesado" && result.response !== "Procesando tu solicitud...") {
+            responseText = result.response;
+          }
+          // Si hay un mensaje de confirmación guardado, usarlo como respuesta
+          else if (result.state?.confirmation_message) {
+            responseText = result.state.confirmation_message;
+            logger.info(`Usando state.confirmation_message en lugar de "Mensaje procesado"`);
+          }
+          // Si hay un mensaje final guardado, usarlo como respuesta
+          else if (result.state?.endMessage) {
+            responseText = result.state.endMessage;
+            logger.info(`Usando state.endMessage en lugar de "Mensaje procesado"`);
+          }
+          // Si hay una última respuesta guardada, usarla como respuesta
+          else if (result.state?.last_response) {
+            responseText = result.state.last_response;
+            logger.info(`Usando state.last_response en lugar de "Mensaje procesado"`);
+          }
+          // Verificar datos de confirmación de cita
+          else if (result.state?.variables?.fecha_cita && result.state?.variables?.hora_cita) {
+            const fecha = result.state.variables.fecha_cita;
+            const hora = result.state.variables.hora_cita;
+            responseText = `¡Perfecto! Tu cita ha sido agendada para el ${fecha} a las ${hora}. Te enviaremos un correo con los detalles y uno de nuestros asesores se comunicará contigo pronto.`;
+            logger.info(`Generando mensaje de confirmación de cita a partir de variables`);
+          }
+
+          return {
+            text: responseText,
+            tokensUsed: result.metrics?.tokensUsed || 0,
+            // Incluimos la respuesta original por si se necesita en otro lado
+            originalResponse: result
+          };
+        }
+      } catch (builderbotError) {
+        logger.warn(`Error al procesar con BuilderBot: ${builderbotError}. Continuando con el flujo normal.`);
+        // Continuar con el procesamiento normal si BuilderBot falla
+      }
+    }
+
+    // Garantizar que tenantId sea siempre un UUID válido
+    const validTenantId = tenantId === "default" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId) ?
+      (config.multitenant.defaultTenantUuid || "00000000-0000-0000-0000-000000000000") : tenantId;
     
   // Clave para el estado en caché con el UUID válido
   const stateKey = `${validTenantId}-${userId}-${sessionId}`;
@@ -199,24 +262,32 @@ export const processMessageWithFlows = async (
 
         try {
           // Intentamos obtener el flujo activo para usar su nodo de entrada
+          logger.info(`Buscando flujo activo usando tenant_id: ${validTenantId}`);
           const activeFlow = await flowService.getFlowByTenant(validTenantId);
-          if (activeFlow && activeFlow.entryNodeId) {
-            entryNodeId = activeFlow.entryNodeId;
-            logger.info(`Usando nodo de entrada real del flujo: ${entryNodeId}`);
-          } else if (activeFlow && activeFlow.nodes) {
-            // Buscar nodo de tipo 'startNode' si no hay entryNodeId explícito
-            const startNode = Object.values(activeFlow.nodes).find(
-              node => node.type === 'startNode' || node.type === 'start'
-            );
+          
+          if (activeFlow) {
+            logger.info(`Flujo ${activeFlow.id} (${activeFlow.name}) cargado para tenant ${validTenantId}`);
+            
+            if (activeFlow.entryNodeId) {
+              entryNodeId = activeFlow.entryNodeId;
+              logger.info(`Usando nodo de entrada real del flujo: ${entryNodeId}`);
+            } else if (activeFlow.nodes) {
+              logger.info(`Flujo no tiene entryNodeId definido, buscando nodo de tipo 'startNode'`);
+              
+              // Buscar nodo de tipo 'startNode' si no hay entryNodeId explícito
+              const startNode = Object.values(activeFlow.nodes).find(
+                node => node.type === 'startNode' || node.type === 'start'
+              );
 
-            if (startNode) {
-              entryNodeId = startNode.id;
-              logger.info(`Encontrado nodo de inicio por tipo: ${entryNodeId}`);
-            } else {
-              logger.warn(`No se encontró nodo de inicio en el flujo, usando valor por defecto: ${entryNodeId}`);
+              if (startNode) {
+                entryNodeId = startNode.id;
+                logger.info(`Encontrado nodo de inicio por tipo: ${entryNodeId}`);
+              } else {
+                logger.warn(`No se encontró nodo de inicio en el flujo, usando valor por defecto: ${entryNodeId}`);
+              }
             }
           } else {
-            logger.warn(`No se encontró un flujo activo, usando nodo de entrada por defecto: ${entryNodeId}`);
+            logger.warn(`No se encontró un flujo activo para tenant ${validTenantId}`);
           }
         } catch (flowError) {
           logger.warn(`Error al intentar obtener el flujo activo: ${flowError}`);
@@ -331,16 +402,48 @@ export const hasDynamicFlow = async (tenantId: string): Promise<boolean> => {
  * Esta función debería llamarse periódicamente
  */
 export const cleanFlowStatesCache = (): void => {
-  const now = Date.now();
-  const timeout = 30 * 60 * 1000; // 30 minutos
-  
-  Object.entries(flowStates).forEach(([key, state]) => {
-    const lastUpdated = state.lastUpdatedAt.getTime();
-    if (now - lastUpdated > timeout) {
-      delete flowStates[key];
-      logger.debug(`Estado de flujo eliminado por timeout: ${key}`);
-    }
-  });
+  try {
+    const now = Date.now();
+    const timeout = 30 * 60 * 1000; // 30 minutos
+
+    Object.entries(flowStates).forEach(([key, state]) => {
+      try {
+        // Verificamos que lastUpdatedAt sea un objeto Date válido
+        if (!state || !state.lastUpdatedAt) {
+          // Si no hay fecha de actualización, lo eliminamos por seguridad
+          delete flowStates[key];
+          logger.debug(`Estado de flujo eliminado por falta de lastUpdatedAt: ${key}`);
+          return;
+        }
+
+        // Convertimos a Date si es un string (por ejemplo, si viene de JSON)
+        let lastUpdatedDate: Date;
+        if (typeof state.lastUpdatedAt === 'string') {
+          lastUpdatedDate = new Date(state.lastUpdatedAt);
+        } else if (state.lastUpdatedAt instanceof Date) {
+          lastUpdatedDate = state.lastUpdatedAt;
+        } else {
+          // Si no es ni string ni Date, usamos la fecha actual para evitar errores
+          logger.warn(`lastUpdatedAt inválido para estado ${key}, usando fecha actual`);
+          lastUpdatedDate = new Date();
+        }
+
+        // Obtenemos el timestamp y verificamos si ha expirado
+        const lastUpdated = lastUpdatedDate.getTime();
+        if (now - lastUpdated > timeout) {
+          delete flowStates[key];
+          logger.debug(`Estado de flujo eliminado por timeout: ${key}`);
+        }
+      } catch (itemError) {
+        // Si hay un error procesando un estado específico, lo eliminamos y continuamos
+        logger.error(`Error procesando estado ${key} durante limpieza: ${itemError}`);
+        delete flowStates[key];
+      }
+    });
+  } catch (error) {
+    // Capturamos cualquier error para evitar que la aplicación falle
+    logger.error(`Error en limpieza de caché de estados: ${error}`);
+  }
 };
 
 /**

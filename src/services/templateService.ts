@@ -87,6 +87,7 @@ export class TemplateService {
    */
   async getTemplateById(templateId: string): Promise<FlowTemplate | null> {
     try {
+      logger.info(`Cargando plantilla con ID: ${templateId}`);
       const supabase = getSupabaseClient();
 
       // Primero intentamos buscar en flow_templates (tabla principal)
@@ -114,6 +115,28 @@ export class TemplateService {
         }
 
         template = chatbotTemplate;
+      }
+
+      // Logging para depuración
+      logger.info(`Plantilla ${templateId} encontrada. Comenzando procesamiento`);
+
+      // Verificamos si la plantilla tiene react_flow_json
+      if (template.react_flow_json) {
+        logger.info(`Plantilla ${templateId} tiene react_flow_json`);
+
+        // Verificamos si podemos parsear react_flow_json si es string
+        if (typeof template.react_flow_json === 'string') {
+          try {
+            const flowData = JSON.parse(template.react_flow_json);
+            logger.info(`react_flow_json parseado como JSON. Tiene ${flowData.nodes?.length || 0} nodos y ${flowData.edges?.length || 0} conexiones`);
+          } catch (parseError) {
+            logger.error(`Error al parsear react_flow_json como JSON: ${parseError}`);
+          }
+        } else {
+          logger.info(`react_flow_json ya es un objeto. Tiene ${template.react_flow_json.nodes?.length || 0} nodos y ${template.react_flow_json.edges?.length || 0} conexiones`);
+        }
+      } else {
+        logger.warn(`Plantilla ${templateId} NO tiene react_flow_json`);
       }
 
       // Procesamos la plantilla para asegurar que tenga la estructura correcta
@@ -156,11 +179,53 @@ export class TemplateService {
             entryNodeId = node.id;
           }
 
+          // Intentar extraer el contenido del mensaje de múltiples campos posibles
+          let nodeContent = "";
+
+          // Primero verificamos campos en node.data directamente
+          if (node.data) {
+            nodeContent = node.data.message || node.data.prompt || node.data.label ||
+                         node.data.content || node.data.text || node.data.value ||
+                         node.data.greeting || node.data.response || "";
+
+            // Si no encontramos nada, buscamos en estructuras anidadas comunes
+            if (!nodeContent && node.data.data) {
+              nodeContent = node.data.data.message || node.data.data.content ||
+                           node.data.data.text || node.data.data.value || "";
+            }
+
+            // Buscar en campos de configuración específicos
+            if (!nodeContent && node.data.configuration) {
+              nodeContent = node.data.configuration.message || node.data.configuration.content ||
+                           node.data.configuration.text || node.data.configuration.initialMessage || "";
+            }
+
+            // Buscar en campos de settings específicos
+            if (!nodeContent && node.data.settings) {
+              nodeContent = node.data.settings.message || node.data.settings.content ||
+                           node.data.settings.text || node.data.settings.initialMessage || "";
+            }
+          }
+
+          // Si aún no encontramos contenido, buscamos en los campos directos del nodo
+          if (!nodeContent) {
+            nodeContent = node.message || node.prompt || node.label ||
+                         node.content || node.text || node.value || "";
+          }
+
+          // Logging para depuración
+          if (node.type === "messageNode" || node.type === "message" ||
+              node.data?.type === "messageNode" || node.data?.nodeType === "message") {
+            logger.debug(`Extrayendo contenido para nodo mensaje ${node.id}: "${nodeContent || "NO ENCONTRADO"}"`);
+            if (!nodeContent) {
+              logger.debug(`Estructura del nodo mensaje: ${JSON.stringify(node)}`);
+            }
+          }
+
           nodes[node.id] = {
             id: node.id,
             type: this.mapNodeType(node.type),
-            content:
-              node.data?.message || node.data?.prompt || node.data?.label || "",
+            content: nodeContent,
             metadata: {
               ...node.data,
               x: node.position?.x,

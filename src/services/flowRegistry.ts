@@ -414,6 +414,9 @@ export const processFlowMessage = async (
       logger.info(`*** MODO PROCESO RÁPIDO ***: Procesando respuesta para nodo: ${nodeToUse}`);
 
       try {
+        // Importamos utils al inicio para evitar problemas de inicialización
+        const utils = await import('./chatbotUtils');
+
         // Guardamos la respuesta del usuario
         if (!state.variables) state.variables = {};
         state.variables.lastUserResponse = message;
@@ -472,6 +475,49 @@ export const processFlowMessage = async (
 
         logger.info(`Avanzando de nodo ${nodeToUse} a nodo ${nextNodeId} (tipo: ${nextNode.type || nextNode.data?.type})`);
 
+        // Caso especial: Si estamos en el nodo de despedida y vamos a avanzar al nodo final,
+        // aseguramos que se muestre el mensaje de despedida y no se reinicie el flujo
+        const currentNodeType = currentNode.type || currentNode.data?.type;
+        const nextNodeType = nextNode.type || nextNode.data?.type;
+        const nodeIsMessageDespedida =
+          nodeToUse === "messageNode-despedida" ||
+          currentNodeType === "despedidaNode" ||
+          currentNodeType === "farewell" ||
+          nodeToUse.toLowerCase().includes("despedida") ||
+          nodeToUse.toLowerCase().includes("farewell");
+
+        const nextNodeIsEndNode =
+          nextNodeType === "endNode" ||
+          nextNode.type === "end" ||
+          nextNodeId === "end-node" ||
+          nextNodeId.toLowerCase().includes("end");
+
+        if (nodeIsMessageDespedida && nextNodeIsEndNode) {
+          logger.info(`Detectado avance de nodo de despedida "${nodeToUse}" a nodo final "${nextNodeId}"`);
+
+          // Extraemos el contenido del nodo de despedida directamente de data.message
+          // o a través de extractNodeContent si está disponible
+          let despedidaContent;
+
+          // La mayoría de los nodos de mensaje tienen data.message directamente
+          if (currentNode.data && currentNode.data.message) {
+            despedidaContent = currentNode.data.message;
+            logger.info(`Contenido de despedida extraído de data.message: "${despedidaContent.substring(0, 50)}..."`);
+          } else {
+            // Si no está en data.message, usamos la función extractNodeContent
+            despedidaContent = utils.extractNodeContent(currentNode);
+          }
+
+          if (despedidaContent) {
+            logger.info(`Usando mensaje de despedida: "${despedidaContent.substring(0, 50)}..."`);
+            response = despedidaContent;
+
+            // Marcamos que es un nodo final para que no se reinicie el flujo
+            state.isEndNode = true;
+            state.endMessage = despedidaContent;
+          }
+        }
+
         // 4. Actualizamos el estado para reflejar el avance
         state.currentNodeId = nextNodeId;
         state.current_node_id = nextNodeId;
@@ -481,8 +527,63 @@ export const processFlowMessage = async (
         state.waitingNodeId = null;
         state.expectedVariable = null;
 
-        // 6. Extraemos el contenido del siguiente nodo
-        const utils = await import('./chatbotUtils');
+        // Nota: utils ya ha sido importado al principio del bloque try
+
+        // Caso especial: Si estamos avanzando a un nodo final desde un nodo de despedida,
+        // aseguramos que se muestre el mensaje de despedida y no se reinicie el flujo
+
+        if (nodeIsMessageDespedida && nextNodeIsEndNode) {
+          logger.info(`Detectado avance de nodo de despedida "${nodeToUse}" a nodo final "${nextNodeId}"`);
+
+          // Extraemos el contenido del nodo de despedida directamente de data.message
+          // o a través de extractNodeContent si está disponible
+          let despedidaContent;
+
+          // La mayoría de los nodos de mensaje tienen data.message directamente
+          if (currentNode.data && currentNode.data.message) {
+            despedidaContent = currentNode.data.message;
+            logger.info(`Contenido de despedida extraído de data.message: "${despedidaContent.substring(0, 50)}..."`);
+          } else {
+            // Si no está en data.message, usamos la función extractNodeContent
+            despedidaContent = utils.extractNodeContent(currentNode);
+          }
+
+          if (despedidaContent) {
+            // Procesar variables en el mensaje de despedida
+            let processedContent = despedidaContent;
+            if (state.variables) {
+              Object.entries(state.variables).forEach(([key, value]) => {
+                if (typeof value === 'string') {
+                  const pattern = new RegExp(`{{\\s*${key}\\s*}}`, 'g');
+                  processedContent = processedContent.replace(pattern, value);
+                }
+              });
+            }
+
+            // Caso especial para variable de nombre
+            if (state.variables.nombre_usuario) {
+              processedContent = processedContent.replace(/{{nombre_usuario}}/g, state.variables.nombre_usuario);
+            } else if (state.variables.nombre) {
+              processedContent = processedContent.replace(/{{nombre_usuario}}/g, state.variables.nombre);
+              processedContent = processedContent.replace(/{{nombre}}/g, state.variables.nombre);
+            }
+
+            logger.info(`Usando mensaje de despedida: "${processedContent.substring(0, 50)}..."`);
+            response = processedContent;
+
+            // Marcamos que es un nodo final para que no se reinicie el flujo
+            state.isEndNode = true;
+            state.endMessage = processedContent;
+
+            // Retornamos directamente para evitar que se sobreescriba el mensaje
+            return {
+              response,
+              state,
+              metrics: { tokensUsed: Math.ceil(response.length / 4) }
+            };
+          }
+        }
+
         if (nextNode.type === 'messageNode' || nextNode.data?.type === 'messageNode') {
           const nextNodeContent = utils.extractNodeContent(nextNode);
           if (nextNodeContent) {
@@ -570,11 +671,118 @@ export const processFlowMessage = async (
 
                       logger.info(`Auto-flow configurado para esperar respuesta en variable: ${state.expectedVariable}`);
                     }
-                    // Si es otro nodo de mensaje, solo actualizamos el estado para la próxima interacción
+                    // Si es otro nodo de mensaje, extraemos su contenido y actualizamos el estado
                     else if (autoFlowNode.type === 'messageNode' || autoFlowNode.data?.type === 'messageNode') {
-                      // Solo actualizamos el estado para la próxima interacción, pero no modificamos la respuesta
+                      // Extraer el contenido del nodo de mensaje al que avanzamos para no perder la información
+                      let messageContent;
+
+                      // Extraer contenido del nodo de mensaje
+                      if (autoFlowNode.data && autoFlowNode.data.message) {
+                        messageContent = autoFlowNode.data.message;
+                        logger.info(`Auto-flow: contenido de mensaje extraído de data.message: "${messageContent.substring(0, 50)}..."`);
+                      } else {
+                        messageContent = utils.extractNodeContent(autoFlowNode);
+                        if (messageContent) {
+                          logger.info(`Auto-flow: contenido de mensaje extraído con utils: "${messageContent.substring(0, 50)}..."`);
+                        }
+                      }
+
+                      // Si es un nodo de mensaje como confirmación de cita, guardamos su contenido
+                      if (messageContent &&
+                         (autoFlowNodeId === "messageNode-cita-confirmada" ||
+                          autoFlowNodeId.toLowerCase().includes("cita") ||
+                          autoFlowNodeId.toLowerCase().includes("confirm"))) {
+
+                        // Procesar variables en el mensaje de confirmación
+                        let processedContent = messageContent;
+                        if (state.variables) {
+                          Object.entries(state.variables).forEach(([key, value]) => {
+                            if (typeof value === 'string') {
+                              const pattern = new RegExp(`{{\\s*${key}\\s*}}`, 'g');
+                              processedContent = processedContent.replace(pattern, value);
+                            }
+                          });
+                        }
+
+                        // Guardar el mensaje procesado como la respuesta principal
+                        logger.info(`Auto-flow: usando mensaje de confirmación de cita: "${processedContent.substring(0, 50)}..."`);
+                        response = processedContent;
+
+                        // Guardar también como mensaje de confirmación en el estado para que pueda
+                        // ser recuperado específicamente desde la API
+                        state.confirmation_message = processedContent;
+                        state.last_response = processedContent; // Guardar en last_response también para redundancia
+                      }
+
+                      // Actualizamos el estado para la próxima interacción
                       state.currentNodeId = autoFlowNodeId;
                       state.current_node_id = autoFlowNodeId;
+
+                      // Caso especial: Si es un nodo de despedida, extraemos su contenido también
+                      const autoNodeType = autoFlowNode.type || autoFlowNode.data?.type;
+                      const isMessageDespedida =
+                        autoFlowNodeId === "messageNode-despedida" ||
+                        autoNodeType === "despedidaNode" ||
+                        autoNodeType === "farewell" ||
+                        autoFlowNodeId.toLowerCase().includes("despedida") ||
+                        autoFlowNodeId.toLowerCase().includes("farewell");
+
+                      if (isMessageDespedida) {
+                        logger.info(`Auto-flow: detectado nodo de despedida "${autoFlowNodeId}"`);
+
+                        // Extraemos y procesamos el contenido del nodo de despedida
+                        let despedidaContent;
+                        if (autoFlowNode.data && autoFlowNode.data.message) {
+                          despedidaContent = autoFlowNode.data.message;
+                          logger.info(`Auto-flow: contenido de despedida extraído de data.message: "${despedidaContent.substring(0, 50)}..."`);
+                        } else {
+                          despedidaContent = utils.extractNodeContent(autoFlowNode);
+                        }
+
+                        if (despedidaContent) {
+                          // Procesamos variables en el mensaje
+                          let processedDespedida = despedidaContent;
+                          if (state.variables) {
+                            Object.entries(state.variables).forEach(([key, value]) => {
+                              if (typeof value === 'string') {
+                                const pattern = new RegExp(`{{\\s*${key}\\s*}}`, 'g');
+                                processedDespedida = processedDespedida.replace(pattern, value);
+                              }
+                            });
+                          }
+
+                          // En lugar de concatenar, guardamos el mensaje de despedida por separado
+                          // para que se envíe como un mensaje independiente
+                          logger.info(`Auto-flow: guardando mensaje de despedida para envío separado: "${processedDespedida.substring(0, 50)}..."`);
+
+                          // Marcamos como nodo final para futuras interacciones
+                          state.isEndNode = true;
+                          state.endMessage = processedDespedida;
+
+                          // Añadimos una bandera especial para indicar que el mensaje de despedida
+                          // debe enviarse como un mensaje separado
+                          state.sendDespedidaAsSeparateMessage = true;
+
+                          // Verificamos si hay un nodo final después y actualizamos el estado
+                          const furtherOutEdges = flowJson.edges.filter(e => e.source === autoFlowNodeId);
+                          if (furtherOutEdges.length > 0) {
+                            const finalNodeId = furtherOutEdges[0].target;
+                            const finalNode = flowJson.nodes.find(n => n.id === finalNodeId);
+                            if (finalNode && (finalNode.type === 'endNode' || finalNode.data?.type === 'endNode')) {
+                              logger.info(`Auto-flow: detectado nodo final "${finalNodeId}" después de despedida`);
+                              state.currentNodeId = finalNodeId;
+                              state.current_node_id = finalNodeId;
+                            }
+                          }
+                        }
+                      }
+                    }
+                    // Si es un nodo de condición, lo dejamos para la próxima interacción
+                    else if (autoFlowNode.type === 'conditionNode' || autoFlowNode.data?.type === 'conditionNode') {
+                      // Actualizamos el estado para que la próxima interacción procese el nodo de condición
+                      state.currentNodeId = autoFlowNodeId;
+                      state.current_node_id = autoFlowNodeId;
+                      logger.info(`Auto-flow: Nodo de condición encontrado, se procesará en la próxima iteración`);
                     }
                   }
                 }
@@ -613,6 +821,216 @@ export const processFlowMessage = async (
           state.expectedVariable = nextNode.data?.variableName;
 
           logger.info(`Configurado para esperar respuesta en variable: ${state.expectedVariable}`);
+        } else if (nextNode.type === 'conditionNode' || nextNode.data?.type === 'conditionNode') {
+          // Si es un nodo de condición, lo manejamos específicamente en el "modo proceso rápido"
+          logger.info(`Modo proceso rápido: Encontrado nodo de condición ${nextNodeId}`);
+
+          // Extraemos información de la condición
+          const condition = nextNode.data?.condition || '';
+          const options = nextNode.data?.options || [];
+
+          logger.info(`Condición: "${condition}", Opciones disponibles: ${options.length}`);
+
+          // Como estamos en modo proceso rápido y acabamos de recibir una respuesta,
+          // usamos esta respuesta para evaluar la condición
+          const userResponse = state.lastUserResponse || message;
+          logger.info(`Evaluando última respuesta del usuario: "${userResponse}"`);
+
+          // Verificamos si es una respuesta afirmativa para primera opción
+          const affirmativeResponses = ['si', 'sí', 'yes', 'afirmativo', 'correcto', 'ok', 'claro'];
+          const negativeResponses = ['no', 'negativo', 'incorrecto', 'nada'];
+
+          // Normalizar la respuesta del usuario
+          const normalizedResponse = userResponse.toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .trim();
+
+          let selectedOptionIndex = -1;
+
+          // Determinar la opción seleccionada basada en la respuesta
+          if (options.length >= 1) {
+            // Primero verificamos coincidencias exactas con valores de opción
+            for (let i = 0; i < options.length; i++) {
+              const option = options[i];
+              const optionValue = (option.value || '').toLowerCase();
+              const optionLabel = (option.label || '').toLowerCase();
+
+              // Si hay coincidencia exacta con el valor o etiqueta de la opción
+              if (normalizedResponse === optionValue ||
+                  normalizedResponse === optionLabel ||
+                  normalizedResponse === String(i + 1)) {
+                selectedOptionIndex = i;
+                logger.info(`Coincidencia exacta con opción ${i + 1}: ${option.label || option.value}`);
+                break;
+              }
+            }
+
+            // Si no hay coincidencia exacta, intentamos con respuestas afirmativas/negativas
+            if (selectedOptionIndex === -1) {
+              if (affirmativeResponses.includes(normalizedResponse) && options.length >= 1) {
+                // Respuesta afirmativa, seleccionamos primera opción
+                selectedOptionIndex = 0;
+                logger.info(`Respuesta afirmativa, seleccionada opción 1`);
+              } else if (negativeResponses.includes(normalizedResponse) && options.length >= 2) {
+                // Respuesta negativa, seleccionamos segunda opción
+                selectedOptionIndex = 1;
+                logger.info(`Respuesta negativa, seleccionada opción 2`);
+              }
+            }
+
+            // Si aún no hay selección, intentamos con respuestas parciales
+            if (selectedOptionIndex === -1) {
+              for (let i = 0; i < options.length; i++) {
+                const option = options[i];
+                const optionValue = (option.value || '').toLowerCase();
+                const optionLabel = (option.label || '').toLowerCase();
+
+                // Si la respuesta del usuario contiene parte del valor o etiqueta
+                if (normalizedResponse.includes(optionValue) ||
+                    optionValue.includes(normalizedResponse) ||
+                    normalizedResponse.includes(optionLabel) ||
+                    optionLabel.includes(normalizedResponse)) {
+                  selectedOptionIndex = i;
+                  logger.info(`Coincidencia parcial con opción ${i + 1}: ${option.label || option.value}`);
+                  break;
+                }
+              }
+            }
+          } else {
+            // Si no hay opciones definidas, usamos criterio afirmativo/negativo
+            if (affirmativeResponses.includes(normalizedResponse)) {
+              selectedOptionIndex = 0; // Primera opción para respuestas afirmativas
+              logger.info(`Sin opciones definidas, respuesta afirmativa, seleccionado camino 1`);
+            } else {
+              selectedOptionIndex = 1; // Segunda opción para cualquier otra respuesta
+              logger.info(`Sin opciones definidas, respuesta no afirmativa, seleccionado camino 2`);
+            }
+          }
+
+          // Buscamos la conexión saliente correspondiente a la opción seleccionada
+          let targetNodeId = null;
+
+          if (selectedOptionIndex !== -1) {
+            // Buscamos conexiones que salen del nodo de condición
+            const conditionOutEdges = flowJson.edges.filter(e => e.source === nextNodeId);
+
+            logger.info(`Conexiones salientes del nodo condición: ${conditionOutEdges.length}`);
+
+            // Mapeamos conexiones a IDs de handles
+            const handleConnections = conditionOutEdges.map(edge => {
+              const sourceHandle = edge.sourceHandle || '';
+              const targetId = edge.target;
+              return { handleId: sourceHandle, targetId };
+            });
+
+            logger.debug(`Conexiones de handles: ${JSON.stringify(handleConnections)}`);
+
+            // Buscamos el handle correspondiente a la opción seleccionada
+            const expectedHandleId = `handle-${selectedOptionIndex}`;
+            const matchingConnection = handleConnections.find(conn => conn.handleId === expectedHandleId);
+
+            if (matchingConnection) {
+              targetNodeId = matchingConnection.targetId;
+              logger.info(`Encontrada conexión para opción ${selectedOptionIndex + 1}, nodo destino: ${targetNodeId}`);
+            } else if (conditionOutEdges.length > selectedOptionIndex) {
+              // Si no encontramos por handle, intentamos usar el índice directamente
+              targetNodeId = conditionOutEdges[selectedOptionIndex].target;
+              logger.info(`Usando conexión por índice para opción ${selectedOptionIndex + 1}, nodo destino: ${targetNodeId}`);
+            } else if (conditionOutEdges.length > 0) {
+              // Si todo falla, usamos la primera conexión disponible
+              targetNodeId = conditionOutEdges[0].target;
+              logger.info(`Usando primera conexión disponible, nodo destino: ${targetNodeId}`);
+            }
+          } else if (options.length > 0) {
+            // Si no pudimos determinar la opción pero hay opciones definidas
+            // Utilizamos la respuesta para solicitar al usuario que elija de nuevo
+            response = `Por favor, elige una de las siguientes opciones:\n${options.map((opt, idx) =>
+                `${idx + 1}. ${opt.label || opt.value}`).join('\n')}`;
+
+            // Mantenemos el mismo nodo de condición para la próxima interacción
+            state.currentNodeId = nextNodeId;
+            state.current_node_id = nextNodeId;
+            state.waitingForInput = true;
+            state.waitingNodeId = nextNodeId;
+
+            logger.info(`No se pudo determinar opción, solicitando al usuario elegir de nuevo`);
+            return {
+              response,
+              state,
+              metrics: { tokensUsed: Math.ceil(response.length / 4) }
+            };
+          }
+
+          // Si encontramos un nodo destino, avanzamos a él
+          if (targetNodeId) {
+            const targetNode = flowJson.nodes.find(n => n.id === targetNodeId);
+
+            if (targetNode) {
+              logger.info(`Avanzando a nodo destino: ${targetNodeId} (tipo: ${targetNode.type || targetNode.data?.type})`);
+
+              // Actualizamos el estado
+              state.currentNodeId = targetNodeId;
+              state.current_node_id = targetNodeId;
+              state.lastConditionResult = selectedOptionIndex;
+
+              // Extraemos el contenido del nodo destino
+              if (targetNode.type === 'messageNode' || targetNode.data?.type === 'messageNode') {
+                const targetContent = utils.extractNodeContent(targetNode);
+
+                if (targetContent) {
+                  response = targetContent;
+                  logger.info(`Contenido extraído del nodo destino: "${response.substring(0, 50)}..."`);
+
+                  // Verificamos si el nodo destino requiere respuesta del usuario
+                  const nodeRequiresResponse = targetNode.data?.waitForResponse === true ||
+                                             targetNode.data?.capture === true ||
+                                             targetNode.data?.waitResponse === true ||
+                                             targetNode.data?.requireResponse === true;
+
+                  if (nodeRequiresResponse) {
+                    state.waitingForInput = true;
+                    state.waitingNodeId = targetNodeId;
+                    state.expectedVariable = targetNode.data?.variableName;
+                    logger.info(`Nodo destino requiere respuesta, configurando espera`);
+                  }
+                }
+              } else if (targetNode.type === 'inputNode' || targetNode.data?.type === 'inputNode') {
+                // Si el nodo destino es de entrada, procesamos su pregunta
+                let question = targetNode.data?.question || targetNode.data?.prompt || "¿Podrías proporcionar más información?";
+
+                // Reemplazamos variables en la pregunta
+                if (state.variables) {
+                  Object.entries(state.variables).forEach(([key, value]) => {
+                    if (typeof value === 'string') {
+                      const pattern = new RegExp(`{{\\s*${key}\\s*}}`, 'g');
+                      question = question.replace(pattern, value);
+                    }
+                  });
+                }
+
+                // Caso especial para variable de nombre
+                if (state.variables.nombre_usuario) {
+                  question = question.replace(/{{nombre_usuario}}/g, state.variables.nombre_usuario);
+                } else if (state.variables.nombre) {
+                  question = question.replace(/{{nombre_usuario}}/g, state.variables.nombre);
+                  question = question.replace(/{{nombre}}/g, state.variables.nombre);
+                }
+
+                response = question;
+                logger.info(`Pregunta procesada del nodo inputNode: "${response.substring(0, 50)}..."`);
+
+                // Configurar para esperar respuesta
+                state.waitingForInput = true;
+                state.waitingNodeId = targetNodeId;
+                state.expectedVariable = targetNode.data?.variableName;
+              }
+            }
+          } else {
+            // Si no pudimos avanzar, damos respuesta genérica
+            logger.warn(`No se pudo determinar el nodo destino para la condición`);
+            response = "Estoy procesando tu solicitud. ¿Puedes proporcionar más detalles?";
+          }
         }
 
         // Marcamos que procesamos la respuesta con éxito
@@ -1146,8 +1564,241 @@ export const processFlowMessage = async (
                 } else {
                   throw new Error(`No se pudo extraer contenido del nodo ${nextNodeId}`);
                 }
-              } else {
-                // Otro tipo de nodo (condición, etc.)
+              } else if (nextNode.type === 'conditionNode' || nextNode.data?.type === 'conditionNode') {
+                // Procesamiento especial para nodo de condición
+                logger.info(`Procesando nodo de condición: ${nextNodeId}`);
+
+                // Extraemos la información de la condición
+                const condition = nextNode.data?.condition || '';
+                const options = nextNode.data?.options || [];
+
+                logger.info(`Condición: "${condition}", Opciones: ${options.length}`);
+
+                // Variable para almacenar la opción seleccionada
+                let selectedOption = null;
+                let selectedOptionIndex = -1;
+
+                // Analizamos la última respuesta del usuario
+                const userResponse = state.lastUserResponse || message;
+                logger.info(`Evaluando respuesta del usuario: "${userResponse}"`);
+
+                // Verificamos si es una respuesta afirmativa (para primera opción)
+                const affirmativeResponses = ['si', 'sí', 'yes', 'afirmativo', 'correcto', 'ok', 'claro'];
+                const negativeResponses = ['no', 'negativo', 'incorrecto', 'nada'];
+
+                // Normalizar la respuesta del usuario (minúsculas, sin acentos)
+                const normalizedResponse = userResponse.toLowerCase()
+                  .normalize("NFD")
+                  .replace(/[\u0300-\u036f]/g, "")
+                  .trim();
+
+                if (options.length >= 1) {
+                  // Si hay opciones definidas, intentamos hacer una coincidencia
+
+                  // Primero verificamos coincidencias exactas con valores de opción
+                  for (let i = 0; i < options.length; i++) {
+                    const option = options[i];
+                    const optionValue = (option.value || '').toLowerCase();
+                    const optionLabel = (option.label || '').toLowerCase();
+
+                    // Si hay coincidencia exacta con el valor o etiqueta de la opción
+                    if (normalizedResponse === optionValue ||
+                        normalizedResponse === optionLabel ||
+                        normalizedResponse === String(i + 1)) {
+                      selectedOption = option;
+                      selectedOptionIndex = i;
+                      logger.info(`Coincidencia exacta con opción ${i + 1}: ${option.label || option.value}`);
+                      break;
+                    }
+                  }
+
+                  // Si no hay coincidencia exacta, intentamos con respuestas afirmativas/negativas
+                  if (selectedOptionIndex === -1) {
+                    if (affirmativeResponses.includes(normalizedResponse) && options.length >= 1) {
+                      // Respuesta afirmativa, seleccionamos primera opción
+                      selectedOption = options[0];
+                      selectedOptionIndex = 0;
+                      logger.info(`Respuesta afirmativa, seleccionada opción 1: ${selectedOption.label || selectedOption.value}`);
+                    } else if (negativeResponses.includes(normalizedResponse) && options.length >= 2) {
+                      // Respuesta negativa, seleccionamos segunda opción
+                      selectedOption = options[1];
+                      selectedOptionIndex = 1;
+                      logger.info(`Respuesta negativa, seleccionada opción 2: ${selectedOption.label || selectedOption.value}`);
+                    }
+                  }
+
+                  // Si aún no hay selección, intentamos con respuestas parciales
+                  if (selectedOptionIndex === -1) {
+                    for (let i = 0; i < options.length; i++) {
+                      const option = options[i];
+                      const optionValue = (option.value || '').toLowerCase();
+                      const optionLabel = (option.label || '').toLowerCase();
+
+                      // Si la respuesta del usuario contiene parte del valor o etiqueta
+                      if (normalizedResponse.includes(optionValue) ||
+                          optionValue.includes(normalizedResponse) ||
+                          normalizedResponse.includes(optionLabel) ||
+                          optionLabel.includes(normalizedResponse)) {
+                        selectedOption = option;
+                        selectedOptionIndex = i;
+                        logger.info(`Coincidencia parcial con opción ${i + 1}: ${option.label || option.value}`);
+                        break;
+                      }
+                    }
+                  }
+                } else {
+                  // Si no hay opciones definidas, usamos criterio afirmativo/negativo
+                  if (affirmativeResponses.includes(normalizedResponse)) {
+                    selectedOptionIndex = 0; // Primera opción para respuestas afirmativas
+                    logger.info(`Sin opciones definidas, respuesta afirmativa, seleccionado camino 1`);
+                  } else {
+                    selectedOptionIndex = 1; // Segunda opción para cualquier otra respuesta
+                    logger.info(`Sin opciones definidas, respuesta no afirmativa, seleccionado camino 2`);
+                  }
+                }
+
+                // Buscamos la conexión saliente correspondiente a la opción seleccionada
+                let targetNodeId = null;
+
+                if (selectedOptionIndex !== -1) {
+                  // Buscamos conexiones que salen del nodo de condición
+                  const conditionOutEdges = flowJson.edges.filter(e => e.source === nextNodeId);
+
+                  logger.info(`Conexiones salientes del nodo condición: ${conditionOutEdges.length}`);
+
+                  // Mapeamos conexiones a IDs de handles
+                  // En ReactFlow, los handles tienen IDs como "handle-0", "handle-1", etc.
+                  const handleConnections = conditionOutEdges.map(edge => {
+                    const sourceHandle = edge.sourceHandle || '';
+                    const targetId = edge.target;
+                    return { handleId: sourceHandle, targetId };
+                  });
+
+                  logger.debug(`Conexiones de handles: ${JSON.stringify(handleConnections)}`);
+
+                  // Buscamos el handle correspondiente a la opción seleccionada
+                  // El formato del handle suele ser "handle-X" donde X corresponde al índice
+                  const expectedHandleId = `handle-${selectedOptionIndex}`;
+                  const matchingConnection = handleConnections.find(conn => conn.handleId === expectedHandleId);
+
+                  if (matchingConnection) {
+                    targetNodeId = matchingConnection.targetId;
+                    logger.info(`Encontrada conexión para opción ${selectedOptionIndex + 1}, nodo destino: ${targetNodeId}`);
+                  } else if (conditionOutEdges.length > selectedOptionIndex) {
+                    // Si no encontramos por handle, intentamos usar el índice directamente
+                    targetNodeId = conditionOutEdges[selectedOptionIndex].target;
+                    logger.info(`Usando conexión por índice para opción ${selectedOptionIndex + 1}, nodo destino: ${targetNodeId}`);
+                  } else if (conditionOutEdges.length > 0) {
+                    // Si todo falla, usamos la primera conexión disponible
+                    targetNodeId = conditionOutEdges[0].target;
+                    logger.info(`Usando primera conexión disponible, nodo destino: ${targetNodeId}`);
+                  }
+                } else if (options.length > 0) {
+                  // Si no pudimos determinar la opción pero hay opciones definidas
+                  // Utilizamos la respuesta para solicitar al usuario que elija de nuevo
+                  response = `Por favor, elige una de las siguientes opciones:\n${options.map((opt, idx) =>
+                      `${idx + 1}. ${opt.label || opt.value}`).join('\n')}`;
+
+                  // Mantenemos el mismo nodo de condición para la próxima interacción
+                  state.currentNodeId = nextNodeId;
+                  state.current_node_id = nextNodeId;
+                  state.waitingForInput = true;
+                  state.waitingNodeId = nextNodeId;
+
+                  logger.info(`No se pudo determinar opción, solicitando al usuario elegir de nuevo`);
+                  return {
+                    response,
+                    state,
+                    metrics: { tokensUsed: Math.ceil(response.length / 4) }
+                  };
+                }
+
+                // Si encontramos un nodo destino, avanzamos a él
+                if (targetNodeId) {
+                  const targetNode = flowJson.nodes.find(n => n.id === targetNodeId);
+
+                  if (targetNode) {
+                    logger.info(`Avanzando a nodo destino: ${targetNodeId} (tipo: ${targetNode.type || targetNode.data?.type})`);
+
+                    // Actualizamos el estado
+                    state.currentNodeId = targetNodeId;
+                    state.current_node_id = targetNodeId;
+                    state.lastConditionResult = selectedOptionIndex;
+
+                    // Extraemos el contenido del nodo destino si es un nodo de mensaje
+                    if (targetNode.type === 'messageNode' || targetNode.data?.type === 'messageNode') {
+                      const targetContent = utils.extractNodeContent(targetNode);
+
+                      if (targetContent) {
+                        response = targetContent;
+                        logger.info(`Contenido extraído del nodo destino: "${response.substring(0, 50)}..."`);
+
+                        // Verificamos si el nodo destino requiere respuesta del usuario
+                        const nodeRequiresResponse = targetNode.data?.waitForResponse === true ||
+                                                    targetNode.data?.capture === true ||
+                                                    targetNode.data?.waitResponse === true ||
+                                                    targetNode.data?.requireResponse === true;
+
+                        if (nodeRequiresResponse) {
+                          state.waitingForInput = true;
+                          state.waitingNodeId = targetNodeId;
+                          state.expectedVariable = targetNode.data?.variableName;
+                          logger.info(`Nodo destino requiere respuesta, configurando espera`);
+                        } else {
+                          // Auto-flow si el nodo no requiere respuesta
+                          logger.info(`Nodo destino no requiere respuesta, verificando auto-flow`);
+                          // Aquí podríamos implementar el auto-flow similar a otras partes del código
+                        }
+                      }
+                    } else if (targetNode.type === 'inputNode' || targetNode.data?.type === 'inputNode') {
+                      // Si el nodo destino es de entrada, procesamos su pregunta
+                      let question = targetNode.data?.question || targetNode.data?.prompt || "¿Podrías proporcionar más información?";
+
+                      // Reemplazamos variables en la pregunta (código similar al existente)
+                      if (state.variables) {
+                        Object.entries(state.variables).forEach(([key, value]) => {
+                          if (typeof value === 'string') {
+                            const pattern = new RegExp(`{{\\s*${key}\\s*}}`, 'g');
+                            question = question.replace(pattern, value);
+                          }
+                        });
+                      }
+
+                      // Caso especial para variable de nombre
+                      if (state.variables.nombre_usuario) {
+                        question = question.replace(/{{nombre_usuario}}/g, state.variables.nombre_usuario);
+                      } else if (state.variables.nombre) {
+                        question = question.replace(/{{nombre_usuario}}/g, state.variables.nombre);
+                        question = question.replace(/{{nombre}}/g, state.variables.nombre);
+                      }
+
+                      response = question;
+                      logger.info(`Pregunta procesada del nodo inputNode: "${response.substring(0, 50)}..."`);
+
+                      // Configurar para esperar respuesta
+                      state.waitingForInput = true;
+                      state.waitingNodeId = targetNodeId;
+                      state.expectedVariable = targetNode.data?.variableName;
+                    } else if (targetNode.type === 'conditionNode' || targetNode.data?.type === 'conditionNode') {
+                      // Si el nodo destino es otra condición, procesamos inmediatamente
+                      logger.info(`Nodo destino es otra condición, procesando en cadena`);
+
+                      // Podemos devolver un mensaje temporal y procesar la condición en la próxima iteración
+                      response = "Procesando tu solicitud...";
+                    } else {
+                      // Otros tipos de nodos
+                      logger.info(`Tipo de nodo destino no manejado directamente: ${targetNode.type || targetNode.data?.type}`);
+                      response = "Procesando tu solicitud...";
+                    }
+                  }
+                } else {
+                  // Si no pudimos avanzar, damos respuesta genérica
+                  logger.warn(`No se pudo determinar el nodo destino para la condición`);
+                  response = "Estoy procesando tu solicitud. ¿Puedes proporcionar más detalles?";
+                }
+
+            } else {
+                // Otro tipo de nodo (no es message, input ni condition)
                 logger.info(`Tipo de nodo no manejado directamente: ${nextNode.type}`);
                 response = "Procesando tu solicitud...";
 
