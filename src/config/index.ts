@@ -14,7 +14,7 @@ dotenv.config();
 
 export const config = {
   // Configuración general
-  port: process.env.PORT || 3090,
+  port: parseInt(process.env.PORT || '3090', 10),
   environment: process.env.NODE_ENV || "development",
 
   // Rutas de directorios
@@ -62,6 +62,16 @@ export const config = {
     provider: process.env.WHATSAPP_PROVIDER || "baileys", // "baileys" o "meta"
   },
 
+  // Configuración de OpenAI
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY || "",
+    model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+    temperature: parseFloat(process.env.OPENAI_TEMPERATURE || "0.7"),
+    maxTokens: parseInt(process.env.OPENAI_MAX_TOKENS || "500"),
+    presencePenalty: parseFloat(process.env.OPENAI_PRESENCE_PENALTY || "0"),
+    frequencyPenalty: parseFloat(process.env.OPENAI_FREQUENCY_PENALTY || "0"),
+  },
+
   // Configuración de Supabase
   supabase: {
     url: process.env.SUPABASE_URL || "",
@@ -75,8 +85,17 @@ export const config = {
     enabled: process.env.ENABLE_MULTITENANT === "true",
     defaultTenant: process.env.DEFAULT_TENANT_ID || "default",
     // UUID fijo para el tenant por defecto (usar en interacciones con DB que esperan UUID)
-    defaultTenantUuid: "00000000-0000-0000-0000-000000000000",
+    defaultTenantUuid: process.env.DEFAULT_TENANT_UUID || "afa60b0a-3046-4607-9c48-266af6e1d322",
   },
+  
+  // Características habilitadas
+  features: {
+    quotaValidation: process.env.ENABLE_QUOTA_VALIDATION === "true",
+    usageTracking: process.env.ENABLE_USAGE_TRACKING === "true",
+  },
+  
+  // Modo debug
+  debug: process.env.NODE_ENV === "development",
 };
 
 export default config;

@@ -263,6 +263,8 @@ export const synthesizeSpeechWithMiniMax = async (
 ): Promise<Buffer> => {
   // Declarar isAsyncMode al principio de la función
   let isAsyncMode = false;
+  // Declarar payload aquí para que esté disponible en todos los bloques
+  let payload: any;
   try {
     // Si el caché está habilitado, verificamos si ya tenemos este audio
     if (useCache) {
@@ -338,8 +340,8 @@ export const synthesizeSpeechWithMiniMax = async (
     
     if (typeof text === "string") {
       textToSynthesize = text;
-    } else if (text && typeof text === "object" && text.text) {
-      textToSynthesize = text.text;
+    } else if (text && typeof text === "object" && (text as any).text) {
+      textToSynthesize = (text as any).text;
     }
     
     // Limpiar espacios y validar que hay texto
@@ -352,7 +354,7 @@ export const synthesizeSpeechWithMiniMax = async (
       logger.info(`Usando texto de respaldo: "${textToSynthesize}"`);
     }
 
-    const payload = {
+    payload = {
       text: textToSynthesize, // Usar la cadena de texto extraída
       model: "speech-02-hd",
       stream: false,

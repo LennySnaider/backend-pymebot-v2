@@ -44,8 +44,8 @@ router.get("/tenant", async (req: AuthRequest, res) => {
       id: t.id, // ID de la plantilla (flow_templates.id)
       name: t.name,
       description: t.description,
-      avatarUrl: t.avatar_url || "/img/avatars/thumb-placeholder.jpg", // Usar un placeholder si no hay avatar
-      isActive: t.isActive, // Estado activo del flujo instanciado (si existe) o de la plantilla
+      avatarUrl: t.avatarUrl || "/img/avatars/thumb-placeholder.jpg", // Usar un placeholder si no hay avatar
+      isActive: t.is_active, // Estado activo del flujo instanciado (si existe) o de la plantilla
       isEnabled: true, // Asumir habilitado si se lista (la lógica de habilitación está en otro lado)
       tokenCost: t.tokens_estimated || 500, // Usar estimación o un default
       flowId: t.flowId, // ID del flujo instanciado (flows.id)

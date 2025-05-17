@@ -12,12 +12,13 @@ import { FlowService } from "./flowService";
 import { FlowState } from "../models/flow.types";
 import logger from "../utils/logger";
 import config from "../config";
-import { processFlowMessage } from "./flowRegistry";
+// import { processMessageWithFlows } from "./flowRegistry"; // Comentado para evitar conflicto
 
 // Estructura para respuestas con metadatos
 export interface FlowResponse {
   text: string;           // Texto de la respuesta
   tokensUsed?: number;    // Tokens utilizados (opcional)
+  originalResponse?: any; // Respuesta original (opcional)
 }
 
 // Inicializamos el servicio de flujos dinámicos
@@ -41,10 +42,13 @@ export const processMessageWithFlows = async (
   userId: string,
   tenantId: string,
   sessionId: string = `session-${userId}-${Date.now()}`,
-  templateConfig?: Record<string, any>
+  templateConfig?: Record<string, any>,
+  options: Record<string, any> = {}
 ): Promise<FlowResponse | string> => {
   try {
     // Intentar procesar con BuilderBot si la función está disponible
+    // Comentado temporalmente - la función processFlowMessage no existe
+    /*
     if (typeof processFlowMessage === 'function' && templateConfig?.id) {
       try {
         logger.info(`Intentando procesar mensaje con BuilderBot (templateId: ${templateConfig.id})`);
@@ -53,7 +57,8 @@ export const processMessageWithFlows = async (
           userId,
           sessionId,
           tenantId,
-          templateConfig.id
+          templateConfig.id,
+          options // Pasar opciones adicionales
         );
 
         if (result) {
@@ -104,6 +109,7 @@ export const processMessageWithFlows = async (
         // Continuar con el procesamiento normal si BuilderBot falla
       }
     }
+    */
 
     // Garantizar que tenantId sea siempre un UUID válido
     const validTenantId = tenantId === "default" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId) ?

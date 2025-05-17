@@ -31,8 +31,8 @@ export const synthesizeSpeechStreamWithMiniMax = async (
   let textToSynthesize = "";
   if (typeof text === "string") {
     textToSynthesize = text.trim();
-  } else if (text && typeof text === "object" && text.text) {
-    textToSynthesize = text.text.trim();
+  } else if (text && typeof text === "object" && (text as any).text) {
+    textToSynthesize = (text as any).text.trim();
   }
   
   // Si el texto está vacío, usar un mensaje por defecto

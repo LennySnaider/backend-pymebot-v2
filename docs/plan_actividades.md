@@ -162,6 +162,7 @@
 - [ ] Optimizar procesamiento de texto y audio
 - [ ] Desarrollar mecanismo de procesamiento en paralelo
 - [ ] Implementar compresión de archivos
+- [x] Solucionar problema de visualización de mensajes múltiples
 
 ### 9.3. Mejoras para Supabase
 

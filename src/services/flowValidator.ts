@@ -7,7 +7,7 @@
  * @updated 2025-04-27
  */
 
-import { Flow, FlowCreateData, FlowNode, NodeType } from "../models/flow.types";
+import { Flow, FlowCreateData, FlowNode, NodeType, ConditionType } from "../models/flow.types";
 import logger from "../utils/logger";
 
 /**
@@ -136,7 +136,7 @@ function validateNodeTypes(nodes: Record<string, FlowNode>): void {
           // Creamos una condición por defecto
           node.next = [
             {
-              condition: { type: 'contains', value: '*' },
+              condition: { type: ConditionType.CONTAINS, value: '*' },
               nextNodeId: nodeId // Bucle hasta que se corrija
             }
           ];
@@ -185,9 +185,9 @@ function validateNodeTypes(nodes: Record<string, FlowNode>): void {
           );
           node.metadata = {
             ...node.metadata,
-            url: node.metadata?.url || "https://api.example.com",
-            method: node.metadata?.method || "GET"
-          };
+            url: (node.metadata as any)?.url || "https://api.example.com",
+            method: (node.metadata as any)?.method || "GET"
+          } as any;
         }
         break;
     }

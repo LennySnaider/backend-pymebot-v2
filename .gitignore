@@ -9,6 +9,7 @@ npm-debug.log*
 # Environment variables
 .env
 .env.local
+.env.example
 .mcp.json
 
 # Dependency directories
@@ -30,3 +31,6 @@ assets/audio/
 
 # Ignorar todos los archivos en bot_sessions/
 bot_sessions/*
+
+# Archived test files
+_archived_tests/

@@ -136,8 +136,11 @@ router.post("/", superAdminMiddleware, async (req: AuthRequest, res) => {
       });
     }
     
-    // Creamos el flujo
-    const flowId = await flowService.createFlow(flowData);
+    // Extraemos los nodos del flowData
+    const { nodes, ...flowDataWithoutNodes } = flowData;
+    
+    // Creamos el flujo con los datos y nodos separados
+    const flowId = await flowService.createFlow(flowDataWithoutNodes, nodes || {});
     
     if (!flowId) {
       return res.status(500).json({

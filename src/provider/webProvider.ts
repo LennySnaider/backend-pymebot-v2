@@ -9,6 +9,7 @@
  */
 
 import { ProviderClass } from "@builderbot/bot";
+import { EventEmitter } from "events";
 import { config } from "../config";
 import logger from "../utils/logger";
 
@@ -17,22 +18,32 @@ import logger from "../utils/logger";
  * Intercepta mensajes y los maneja sin enviarlos por WhatsApp
  */
 export class WebProvider extends ProviderClass {
+  vendor: EventEmitter;
+  globalVendorArgs: any = {};
+  busEvents = (): { event: string; func: Function; }[] => [];
   queueMessage: string | null = null;
+  queuedMessages: string[] = []; // Para capturar todos los mensajes
   userId: string;
   tenantId: string;
+  sessionId?: string;  // Añadir propiedad para sessionId
   templateConfig: Record<string, any> | null = null;
   messageMetadata: Record<string, any> = {};
+  private emitter: EventEmitter;
 
   /**
    * Constructor del proveedor web
    * @param userId ID del usuario
    * @param tenantId ID del tenant
+   * @param sessionId ID de la sesión (opcional)
    */
-  constructor(userId: string, tenantId: string) {
+  constructor(userId: string, tenantId: string, sessionId?: string) {
     super();
     this.userId = userId;
     this.tenantId = tenantId;
-    logger.info(`WebProvider inicializado para usuario ${userId} de tenant ${tenantId}`);
+    this.sessionId = sessionId;
+    this.emitter = new EventEmitter();
+    this.vendor = this.emitter;
+    logger.info(`WebProvider inicializado para usuario ${userId} de tenant ${tenantId}${sessionId ? ` con sesión ${sessionId}` : ''}`);
   }
 
   /**
@@ -51,20 +62,54 @@ export class WebProvider extends ProviderClass {
    * @param options Opciones adicionales
    * @returns true si se procesó correctamente
    */
-  async sendMessage(userId: string, message: string, options?: any) {
-    logger.info(`[WebProvider] Mensaje para ${userId}: ${message}`);
+  async sendMessage(userId: string, message: any, options?: any): Promise<any> {
+    logger.info(`[WebProvider] sendMessage llamado`);
+    logger.info(`[WebProvider] userId: ${userId}`);
+    logger.info(`[WebProvider] mensaje:`, JSON.stringify(message));
+    logger.info(`[WebProvider] tipo de mensaje: ${typeof message}`);
+    logger.info(`[WebProvider] this.userId: ${this.userId}`);
     
-    // Guardamos el mensaje y cualquier metadato adicional
-    this.queueMessage = message;
+    // Solo procesamos si el userId coincide
+    if (userId !== this.userId) {
+      logger.warn(`[WebProvider] userId no coincide, ignorando mensaje`);
+      return true as any;
+    }
+    
+    // Si el mensaje es un objeto con body y buttons
+    if (typeof message === 'object' && message !== null) {
+      logger.info(`[WebProvider] Mensaje es un objeto con posibles botones`);
+      logger.info(`[WebProvider] message.body:`, message.body);
+      logger.info(`[WebProvider] message.buttons:`, JSON.stringify(message.buttons));
+      
+      if (message.body !== undefined) {
+        this.queueMessage = message.body;
+        this.queuedMessages.push(message.body);
+      }
+      
+      // Guardar botones para el frontend
+      if (message.buttons && Array.isArray(message.buttons)) {
+        this.messageMetadata.buttons = message.buttons;
+      }
+      
+    } else {
+      // Mensaje normal (string)
+      this.queueMessage = message;
+      this.queuedMessages.push(message);
+    }
+    
+    logger.info(`[WebProvider] Total de mensajes en cola: ${this.queuedMessages.length}`);
+    logger.info(`[WebProvider] Mensajes actuales: ${JSON.stringify(this.queuedMessages)}`);
+    logger.info(`[WebProvider] Metadata actual:`, JSON.stringify(this.messageMetadata));
     
     // Si hay options, extraemos cualquier metadato relevante
     if (options) {
+      logger.info(`[WebProvider] Options recibidas: ${JSON.stringify(options)}`);
       if (options.tokenCount) {
         this.messageMetadata.tokensUsed = options.tokenCount;
       }
     }
     
-    return true;
+    return true as any;
   }
 
   /**
@@ -85,20 +130,89 @@ export class WebProvider extends ProviderClass {
   }
 
   /**
+   * Hook antes de inicializar el servidor HTTP
+   */
+  async beforeHttpServerInit(): Promise<void> {
+    // No necesitamos hacer nada específico
+  }
+
+  /**
+   * Hook después de inicializar el servidor HTTP
+   */
+  async afterHttpServerInit(): Promise<void> {
+    // No necesitamos hacer nada específico
+  }
+
+  /**
+   * Envía media (no implementado en web provider)
+   */
+  async sendMedia(userId: string, mediaUrl: string, text?: string): Promise<any> {
+    logger.warn(`[WebProvider] sendMedia no implementado para usuario ${userId}`);
+    return this.sendMessage(userId, text || `[Media: ${mediaUrl}]`);
+  }
+
+  /**
+   * Envía botones
+   * @param userId ID del usuario
+   * @param buttons Array de botones
+   * @param text Texto que acompaña a los botones
+   */
+  async sendButtons(userId: string, buttons: any[], text?: string): Promise<any> {
+    logger.info(`[WebProvider] sendButtons para usuario ${userId}`);
+    logger.info(`[WebProvider] Botones:`, JSON.stringify(buttons));
+    logger.info(`[WebProvider] Texto:`, text);
+    
+    // Almacenar botones como metadatos pero sin enviarlos como mensaje
+    const messageWithButtons = {
+      body: text || '',
+      buttons: buttons
+    };
+    
+    // Si hay texto, enviarlo como un mensaje regular
+    if (text) {
+      await this.sendMessage(userId, text);
+    }
+    
+    // NO enviar los botones como texto JSON
+    // Los botones deben estar en los metadatos
+    
+    return messageWithButtons;
+  }
+
+  /**
+   * Inicializa el vendor (no necesario para web provider)
+   */
+  async initVendor(): Promise<any> {
+    logger.info(`[WebProvider] initVendor llamado`);
+    return this.vendor;
+  }
+
+  /**
+   * Guarda un archivo (no implementado en web provider)
+   */
+  async saveFile(path: string, content: any): Promise<string> {
+    logger.warn(`[WebProvider] saveFile no implementado`);
+    return path;
+  }
+
+  /**
    * Envía un mensaje simulado al bot para procesamiento
    * @param message Mensaje a procesar
    * @returns Respuesta del bot
    */
   async handleIncomingMessage(message: string): Promise<string> {
+    logger.info(`[WebProvider] handleIncomingMessage: "${message}"`);
+    
     // Reseteamos el estado
     this.queueMessage = null;
+    this.queuedMessages = [];
     this.messageMetadata = {};
 
     // Si tenemos configuración de plantilla, la añadimos al contexto
     const additionalContext = this.templateConfig ? { templateConfig: this.templateConfig } : undefined;
 
     // Emitimos un evento simulado de mensaje con contexto adicional
-    await this.emit("message", {
+    this.emit("message", {
       from: this.userId,
       body: message,
       // Añadimos datos de contexto para que flow pueda usarlos
@@ -108,16 +222,20 @@ export class WebProvider extends ProviderClass {
 
     // Esperamos hasta que tengamos respuesta (con timeout)
     let attempts = 0;
-    while (!this.queueMessage && attempts < 50) {
+    while (this.queuedMessages.length === 0 && attempts < 50) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       attempts++;
     }
 
-    if (!this.queueMessage) {
+    logger.info(`[WebProvider] Mensajes capturados: ${this.queuedMessages.length}`);
+    logger.info(`[WebProvider] Mensajes: ${JSON.stringify(this.queuedMessages)}`);
+
+    if (this.queuedMessages.length === 0) {
       return "Lo siento, no he podido procesar tu mensaje en este momento.";
     }
 
-    return this.queueMessage;
+    // Concatenar todas las respuestas
+    return this.queuedMessages.join('\n');
   }
 
   /**
@@ -126,6 +244,40 @@ export class WebProvider extends ProviderClass {
    */
   getMessageMetadata(): Record<string, any> {
     return { ...this.messageMetadata };
+  }
+
+  /**
+   * Obtiene todas las respuestas capturadas
+   * @returns Array de mensajes
+   */
+  getAllResponses(): string[] {
+    return this.queuedMessages;
+  }
+
+  /**
+   * Limpia la cola de mensajes
+   */
+  clearQueue(): void {
+    this.queuedMessages = [];
+    this.queueMessage = null;
+  }
+
+  /**
+   * Emitir un evento a través del vendor
+   * @param eventName Nombre del evento
+   * @param args Argumentos del evento
+   */
+  emit(eventName: string, ...args: any[]) {
+    logger.info(`[WebProvider] Emitiendo evento: ${eventName}`);
+    this.vendor.emit(eventName, ...args);
+  }
+
+  /**
+   * Método para simular un mensaje recibido (útil para pruebas)
+   * @param message Mensaje a simular
+   */
+  simulateIncomingMessage(message: { from: string; body: string }) {
+    this.emit('message', message);
   }
 
   /**
@@ -141,13 +293,15 @@ export class WebProvider extends ProviderClass {
  * Crea una instancia del proveedor web
  * @param userId ID del usuario
  * @param tenantId ID del tenant
+ * @param sessionId ID de la sesión (opcional)
  * @returns Instancia del proveedor web
  */
 export const createWebProvider = (
   userId: string,
-  tenantId: string = config.multitenant.defaultTenant
+  tenantId: string = config.multitenant.defaultTenant,
+  sessionId?: string
 ): WebProvider => {
-  return new WebProvider(userId, tenantId);
+  return new WebProvider(userId, tenantId, sessionId);
 };
 
 export default WebProvider;

@@ -19,7 +19,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { config } from "./config";
 import voiceRouter from "./api/voice";
-import textRouter from "./api/text"; // Importamos el nuevo router de texto
+import textRouter from "./api/textRouter"; // Importamos el nuevo router de texto
 import flowsRouter from "./api/flows";
 import templatesRouter from "./api/templates";
 import businessRouter from "./api/business"; // Importamos el router de business
@@ -30,10 +30,13 @@ import templatesDiagnosticRouter from "./api/templates-diagnostic"; // Router pa
 import systemRouter from "./api/system"; // Router para información del sistema
 import connectionTestRouter from "./api/connection-test"; // Router para pruebas de conexión
 import builderbotRouter from "./api/builderbot-integration"; // Importamos router de integración con BuilderBot
+import variablesRouter from "./api/variables"; // Router para gestión de variables
 import logger from "./utils/logger";
 import { initWhatsAppProvider } from "./provider/whatsappProvider";
 import { FlowService } from "./services/flowService";
 import { cleanAllSessions } from "./utils/cleanSessions";
+import { checkAndFixDatabaseSchema } from "./utils/dbSchemaValidator"; // Importamos el validador del esquema
+import { setupTenantVariablesSyncTrigger, syncAllTenants } from "./services/variableSyncService"; // Importamos el servicio de sincronización
 // import { preRenderCommonPhrases } from "./services/tts";  // Comentado temporalmente
 
 // Los flujos predeterminados han sido desactivados para forzar el uso de plantillas configuradas
@@ -58,14 +61,14 @@ app.use(cors({
   origin: true, // Esto permite cualquier origen
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization']
+  allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization', 'Cache-Control', 'Pragma']
 }));
 
 // Middleware específico para OPTIONS preflight
 app.options('*', (req, res) => {
   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cache-Control, Pragma');
   res.header('Access-Control-Allow-Credentials', 'true');
   res.status(200).end();
 });
@@ -155,12 +158,33 @@ app.use("/api/templates-diagnostic", templatesDiagnosticRouter); // Registramos 
 app.use("/api/system", systemRouter); // Registramos el router de información del sistema
 app.use("/api/connection-test", connectionTestRouter); // Registramos el router de prueba de conexión
 app.use("/api/builderbot", builderbotRouter); // Registramos el router de integración con BuilderBot
+app.use("/api/variables", variablesRouter); // Registramos el router de variables
+app.use("/api/variables", variablesRouter); // Registramos el router de gestión de variables
 
 // Inicialización de la aplicación
 const main = async () => {
   try {
     logger.info(`Iniciando aplicación en entorno: ${config.environment}`);
     logger.info(`Puerto configurado: ${PORT}`);
+    
+    // Verificar y corregir el esquema de la base de datos
+    logger.info("Verificando esquema de la base de datos...");
+    const schemaResult = await checkAndFixDatabaseSchema();
+    logger.info(`Resultado de verificación del esquema: ${schemaResult ? 'Exitoso' : 'Con errores'}`);
+    
+    // Importar e inicializar FlowRegistry
+    const { FlowRegistry } = await import("./services/flowRegistry");
+    logger.info("Inicializando FlowRegistry...");
+    await FlowRegistry.initialize();
+    
+    // Configurar sincronización de variables entre tenants y tenant_variables
+    logger.info("Configurando sincronización de variables del sistema...");
+    await setupTenantVariablesSyncTrigger();
+    
+    // Sincronizar todos los tenants activos
+    logger.info("Sincronizando variables para todos los tenants activos...");
+    const syncCount = await syncAllTenants();
+    logger.info(`Se sincronizaron variables para ${syncCount} tenants`);
 
     // Desactivando pre-renderizado para enfocarnos en la integración con MiniMax STT
     logger.info("Pre-renderizado desactivado temporalmente");
@@ -178,13 +202,16 @@ const main = async () => {
 
         const adapterProvider = await initWhatsAppProvider();
         const adapterDB = new MemoryDB();
+        
+        // Registrar el provider en el providerService para que pueda ser usado en las APIs
+        const { setProvider } = await import("./services/providerService");
+        setProvider(adapterProvider);
         const flowService = new FlowService();
         const tenantId = config.multitenant.defaultTenant;
 
         const dynamicFlow = await flowService.getFlowByTenant(tenantId);
-        const adapterFlow = createFlow(
-          dynamicFlow ? [dynamicFlow] : []
-        );
+        // Crear un flujo vacío por ahora ya que no estamos usando BuilderBot flows tradicionales
+        const adapterFlow = createFlow([]);
 
         // IMPORTANTE: Creamos el bot y capturamos el valor de retorno
         // Esto es crucial para que los eventos de WhatsApp (como el QR) funcionen correctamente
@@ -239,6 +266,7 @@ const main = async () => {
       logger.info(`[API System]: ${serverUrl}/api/system`);
       logger.info(`[API Connection Test]: ${serverUrl}/api/connection-test`);
       logger.info(`[API BuilderBot]: ${serverUrl}/api/builderbot`);
+      logger.info(`[API Variables]: ${serverUrl}/api/variables`);
       logger.info(`[CORS Test]: ${serverUrl}/cors-test`);
 
       if (config.whatsapp.enabled) {

@@ -32,6 +32,14 @@ export enum AuditActionType {
   UPDATE_FLOW = "update_flow",
   TEST_FLOW = "test_flow",
   TEST_TEMPLATE = "test_template",
+  
+  // Acciones de chat
+  CHAT_START = "chat_start",
+  CHAT_COMPLETED = "chat_completed",
+  
+  // Acciones de templates
+  SET_ACTIVE_TEMPLATE = "set_active_template",
+  SET_TEMPLATE_ENABLED = "set_template_enabled",
 }
 
 /**

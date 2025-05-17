@@ -25,7 +25,7 @@ const prompt = fs.readFileSync(pathPrompt, "utf8");
 let aiService: AIServices;
 
 try {
-  aiService = new AIServices(config.ApiKey);
+  aiService = new AIServices(config.openai.apiKey);
 } catch (error) {
   console.error("Error al inicializar AIServices:", error);
 }

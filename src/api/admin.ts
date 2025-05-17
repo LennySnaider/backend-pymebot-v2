@@ -119,7 +119,6 @@ router.get('/config', (req, res) => {
     paths: config.paths,
     multitenantEnabled: config.multitenant.enabled,
     voiceEnabled: true,
-    debug: config.debug,
   };
   
   return res.json(safeConfig);

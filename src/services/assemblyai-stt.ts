@@ -13,6 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import axios from 'axios';
+import logger from '../utils/logger';
 
 /**
  * Detecta el formato del audio basado en sus primeros bytes

@@ -1,21 +1,22 @@
 /**
  * src/api/builderbot-integration.ts
- * 
- * Punto de integración entre el sistema y BuilderBot.
- * Proporciona rutas para procesar mensajes, gestionar plantillas
- * y conectar con el servicio de flujos.
- * 
- * @version 1.0.0
- * @created 2025-05-10
+ *
+ * API endpoints para la integración con BuilderBot.
+ * Maneja el procesamiento de mensajes conversacionales y flujos.
+ *
+ * @version 1.2.0
+ * @updated 2025-05-16
  */
 
-import { Router } from "express";
-import { AuthRequest, authMiddleware } from "../middlewares/auth";
-import { config } from "../config";
+import { Router, Request, Response } from "express";
+import { v4 as uuidv4 } from "uuid";
+import { TenantAuthRequest } from "../types/auth";
+import { authMiddleware } from "../middlewares/auth";
 import logger from "../utils/logger";
-import { processFlowMessage, registerTemplateAsFlow } from "../services/flowRegistry";
+import { processFlowMessage, registerNewTemplate } from "../services/flowRegistry";
 import { loadConversationState, getActiveSessions, finalizeSession } from "../services/stateManager";
 import { logAuditAction, AuditActionType } from "../services/auditService";
+import { processFinalText } from "../utils/finalReplacer";
 
 const router = Router();
 
@@ -26,294 +27,300 @@ router.use(authMiddleware);
  * Procesa un mensaje con BuilderBot
  * POST /builderbot/message
  */
-router.post("/message", async (req: AuthRequest, res) => {
+router.post("/message", async (req: TenantAuthRequest, res: Response) => {
+  const correlationId = uuidv4();
+  const startTime = Date.now();
+  
   try {
-    const { message, sessionId, templateId } = req.body;
-    const userId = req.user?.id || "unknown";
-    const tenantId = req.user?.tenantId || config.multitenant.defaultTenant;
+    const { 
+      userId,
+      sessionId = uuidv4(),
+      message,
+      templateId
+    } = req.body;
     
-    // Validamos parámetros
-    if (!message) {
+    if (!userId || !message) {
       return res.status(400).json({
-        success: false,
-        error: "Se requiere un mensaje",
+        error: 'Invalid request',
+        message: 'userId and message are required',
+        correlationId
       });
     }
     
-    // Generamos un sessionId si no se proporciona
-    const chatSessionId = sessionId || `session-${userId}-${Date.now()}`;
-    
-    // Procesamos el mensaje con el flujo adecuado
-    const { response, state, metrics } = await processFlowMessage(
-      message,
+    logger.info(`[${correlationId}] Processing BuilderBot message`, {
+      tenantId: req.user!.tenantId,
       userId,
-      chatSessionId,
-      tenantId,
+      sessionId,
+      messageLength: message.length,
       templateId
+    });
+    
+    // Registrar inicio de acción de auditoría
+    const auditId = await logAuditAction({
+      tenantId: req.user!.tenantId!,
+      userId: req.user!.id,
+      actionType: AuditActionType.PROCESS_MESSAGE,
+      description: `Processing message with BuilderBot`,
+      metadata: {
+        correlationId,
+        sessionId,
+        userId,
+        messagePreview: message.substring(0, 50)
+      }
+    });
+    
+    // Cargar estado de conversación
+    const existingState = await loadConversationState(
+      req.user!.tenantId!,
+      userId,
+      sessionId
     );
     
-    // Registramos la actividad
-    await logAuditAction({
-      action: AuditActionType.CHAT_MESSAGE,
-      userId,
-      tenantId,
-      resourceId: templateId || state.flow_id || "unknown",
-      resourceType: "flow",
-      details: {
-        sessionId: chatSessionId,
-        messageLength: message.length,
-        responseLength: response.length,
-        tokensUsed: metrics?.tokensUsed || 0
-      }
-    }).catch(err => logger.error("Error al registrar actividad de chat:", err));
+    let response: any;
     
-    return res.json({
-      success: true,
-      message: message,
-      response: response,
-      sessionId: chatSessionId,
-      state: {
-        currentNodeId: state.last_node_id,
-        flowId: state.flow_id,
-        context: {
-          // Incluimos solo variables relevantes para el frontend
-          nombre_usuario: state.nombre_usuario,
-          email_usuario: state.email_usuario,
-          telefono_usuario: state.telefono_usuario,
-          compra_renta: state.compra_renta,
-          tipo_propiedad: state.tipo_propiedad,
-          presupuesto: state.presupuesto,
-          confirma_cita: state.confirma_cita,
-          fecha_cita: state.fecha_cita,
-          hora_cita: state.hora_cita
+    try {
+      // Procesar mensaje con BuilderBot
+      response = await processFlowMessage(
+        userId,
+        message,
+        req.user!.tenantId!,
+        sessionId,
+        templateId,
+        existingState ? { initialData: existingState.data } : undefined
+      );
+      
+    } catch (flowError) {
+      logger.error(`[${correlationId}] Flow processing error`, flowError);
+      throw flowError;
+    }
+    
+    // Procesar texto final con reemplazos (si aplica)
+    if (response && response.answer) {
+      const processedAnswers = [];
+      for (const answer of response.answer) {
+        if (answer.body) {
+          const processedText = await processFinalText(
+            answer.body,
+            req.user!.tenantId!,
+            userId,
+            sessionId
+          );
+          processedAnswers.push({ ...answer, body: processedText });
+        } else {
+          processedAnswers.push(answer);
         }
-      },
-      metrics: metrics
-    });
-  } catch (error) {
-    logger.error("Error al procesar mensaje con BuilderBot:", error);
-    return res.status(500).json({
-      success: false,
-      error: "Error al procesar mensaje",
-      details: error instanceof Error ? error.message : "Error desconocido",
-    });
-  }
-});
-
-/**
- * Registra una plantilla como flujo de BuilderBot
- * POST /builderbot/register-template
- */
-router.post("/register-template", async (req: AuthRequest, res) => {
-  try {
-    const { templateId, templateData } = req.body;
-    const userId = req.user?.id || "unknown";
-    const tenantId = req.user?.tenantId || config.multitenant.defaultTenant;
-    
-    // Validamos parámetros
-    if (!templateId || !templateData) {
-      return res.status(400).json({
-        success: false,
-        error: "Se requiere ID de plantilla y datos de plantilla",
-      });
+      }
+      response.answer = processedAnswers;
     }
     
-    // Registramos la plantilla como flujo
-    const success = registerTemplateAsFlow(templateId, templateData);
-    
-    if (!success) {
-      return res.status(500).json({
-        success: false,
-        error: "Error al registrar plantilla como flujo",
-      });
-    }
-    
-    // Registramos la actividad
+    // Registrar fin exitoso
     await logAuditAction({
-      action: AuditActionType.TEMPLATE_REGISTERED,
-      userId,
-      tenantId,
-      resourceId: templateId,
-      resourceType: "template",
-      details: {
-        templateName: templateData.name || "Unknown Template"
+      tenantId: req.user!.tenantId!,
+      userId: req.user!.id,
+      actionType: AuditActionType.PROCESS_MESSAGE_SUCCESS,
+      description: `Message processed successfully`,
+      metadata: {
+        correlationId,
+        sessionId,
+        responseType: response ? 'success' : 'empty',
+        processingTime: Date.now() - startTime,
+        parentActionId: auditId
       }
-    }).catch(err => logger.error("Error al registrar actividad de registro de plantilla:", err));
+    });
     
-    return res.json({
+    logger.info(`[${correlationId}] Message processed successfully`, {
+      processingTime: Date.now() - startTime,
+      responsePresent: !!response
+    });
+    
+    return res.status(200).json({
       success: true,
-      templateId,
-      message: "Plantilla registrada correctamente como flujo",
-    });
-  } catch (error) {
-    logger.error("Error al registrar plantilla como flujo:", error);
-    return res.status(500).json({
-      success: false,
-      error: "Error al registrar plantilla",
-      details: error instanceof Error ? error.message : "Error desconocido",
-    });
-  }
-});
-
-/**
- * Obtiene sesiones activas para un tenant
- * GET /builderbot/sessions
- */
-router.get("/sessions", async (req: AuthRequest, res) => {
-  try {
-    const tenantId = req.user?.tenantId || config.multitenant.defaultTenant;
-    
-    // Obtenemos las sesiones activas
-    const sessions = await getActiveSessions(tenantId);
-    
-    // Simplificamos los datos para la respuesta
-    const simplifiedSessions = sessions.map(session => ({
-      sessionId: session.session_id,
-      userId: session.user_id,
-      createdAt: session.created_at,
-      updatedAt: session.updated_at,
-      flowId: session.state_data?.flow_id || "unknown",
-      lastNodeId: session.state_data?.last_node_id || "unknown",
-      userData: {
-        nombre: session.state_data?.nombre_usuario,
-        email: session.state_data?.email_usuario,
-        telefono: session.state_data?.telefono_usuario
-      }
-    }));
-    
-    return res.json({
-      success: true,
-      sessions: simplifiedSessions,
-    });
-  } catch (error) {
-    logger.error("Error al obtener sesiones:", error);
-    return res.status(500).json({
-      success: false,
-      error: "Error al obtener sesiones",
-      details: error instanceof Error ? error.message : "Error desconocido",
-    });
-  }
-});
-
-/**
- * Recupera el estado de una sesión específica
- * GET /builderbot/sessions/:sessionId
- */
-router.get("/sessions/:sessionId", async (req: AuthRequest, res) => {
-  try {
-    const { sessionId } = req.params;
-    const userId = req.query.userId as string;
-    const tenantId = req.user?.tenantId || config.multitenant.defaultTenant;
-    
-    // Validamos parámetros
-    if (!sessionId || !userId) {
-      return res.status(400).json({
-        success: false,
-        error: "Se requiere sessionId y userId",
-      });
-    }
-    
-    // Cargamos el estado de la sesión
-    const state = await loadConversationState(tenantId, userId, sessionId);
-    
-    if (!state) {
-      return res.status(404).json({
-        success: false,
-        error: "Sesión no encontrada",
-      });
-    }
-    
-    // Simplificamos el estado para la respuesta
-    const simplifiedState = {
-      flowId: state.flow_id || "unknown",
-      lastNodeId: state.last_node_id || "unknown",
-      conversationStatus: state.conversation_status || "unknown",
-      startedAt: state.started_at,
-      lastUpdatedAt: state.last_updated_at,
-      userData: {
-        nombre: state.nombre_usuario,
-        email: state.email_usuario,
-        telefono: state.telefono_usuario
-      },
-      leadData: {
-        compraRenta: state.compra_renta,
-        tipoPropiedad: state.tipo_propiedad,
-        presupuesto: state.presupuesto,
-        leadStatus: state.lead_status
-      },
-      appointmentData: {
-        confirma_cita: state.confirma_cita,
-        fecha_cita: state.fecha_cita,
-        hora_cita: state.hora_cita,
-        appointment_scheduled: state.appointment_scheduled
-      }
-    };
-    
-    return res.json({
-      success: true,
+      correlationId,
       sessionId,
-      state: simplifiedState,
+      response,
+      processingTime: Date.now() - startTime
     });
+    
   } catch (error) {
-    logger.error(`Error al obtener estado de sesión ${req.params.sessionId}:`, error);
+    logger.error(`[${correlationId}] Error processing BuilderBot message`, error);
+    
+    // Registrar error en auditoría
+    await logAuditAction({
+      tenantId: req.user!.tenantId!,
+      userId: req.user!.id,
+      actionType: AuditActionType.PROCESS_MESSAGE_ERROR,
+      description: 'Error processing message',
+      metadata: {
+        correlationId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        processingTime: Date.now() - startTime
+      }
+    });
+    
     return res.status(500).json({
-      success: false,
-      error: "Error al obtener estado de sesión",
-      details: error instanceof Error ? error.message : "Error desconocido",
+      error: 'Processing error',
+      message: error instanceof Error ? error.message : 'Unknown error',
+      correlationId,
+      processingTime: Date.now() - startTime
     });
   }
 });
 
 /**
- * Finaliza una sesión
- * POST /builderbot/sessions/:sessionId/end
+ * Obtener sesiones activas del usuario
+ * GET /builderbot/sessions/:userId
  */
-router.post("/sessions/:sessionId/end", async (req: AuthRequest, res) => {
+router.get("/sessions/:userId", async (req: TenantAuthRequest, res: Response) => {
+  const correlationId = uuidv4();
+  
+  try {
+    const { userId } = req.params;
+    
+    logger.info(`[${correlationId}] Getting active sessions`, {
+      tenantId: req.user!.tenantId,
+      userId
+    });
+    
+    const sessions = await getActiveSessions(
+      req.user!.tenantId!,
+      userId
+    );
+    
+    return res.status(200).json({
+      success: true,
+      correlationId,
+      userId,
+      sessions,
+      count: sessions.length
+    });
+    
+  } catch (error) {
+    logger.error(`[${correlationId}] Error getting sessions`, error);
+    
+    return res.status(500).json({
+      error: 'Session retrieval error',
+      message: error instanceof Error ? error.message : 'Unknown error',
+      correlationId
+    });
+  }
+});
+
+/**
+ * Finalizar una sesión de conversación
+ * POST /builderbot/sessions/:sessionId/finalize
+ */
+router.post("/sessions/:sessionId/finalize", async (req: TenantAuthRequest, res: Response) => {
+  const correlationId = uuidv4();
+  
   try {
     const { sessionId } = req.params;
     const { userId } = req.body;
-    const tenantId = req.user?.tenantId || config.multitenant.defaultTenant;
     
-    // Validamos parámetros
-    if (!sessionId || !userId) {
+    if (!userId) {
       return res.status(400).json({
-        success: false,
-        error: "Se requiere sessionId y userId",
+        error: 'Invalid request',
+        message: 'userId is required',
+        correlationId
       });
     }
     
-    // Finalizamos la sesión
-    const success = await finalizeSession(tenantId, userId, sessionId);
-    
-    if (!success) {
-      return res.status(500).json({
-        success: false,
-        error: "Error al finalizar sesión",
-      });
-    }
-    
-    // Registramos la actividad
-    await logAuditAction({
-      action: AuditActionType.CHAT_ENDED,
-      userId: req.user?.id || "unknown",
-      tenantId,
-      resourceId: sessionId,
-      resourceType: "session",
-      details: {
-        chatUserId: userId
-      }
-    }).catch(err => logger.error("Error al registrar finalización de chat:", err));
-    
-    return res.json({
-      success: true,
-      message: "Sesión finalizada correctamente",
+    logger.info(`[${correlationId}] Finalizing session`, {
+      tenantId: req.user!.tenantId,
+      sessionId,
+      userId
     });
+    
+    await finalizeSession(
+      req.user!.tenantId!,
+      userId,
+      sessionId
+    );
+    
+    // Registrar acción de auditoría
+    await logAuditAction({
+      tenantId: req.user!.tenantId!,
+      userId: req.user!.id,
+      actionType: AuditActionType.SESSION_FINALIZED,
+      description: 'Conversation session finalized',
+      metadata: {
+        correlationId,
+        sessionId,
+        userId
+      }
+    });
+    
+    return res.status(200).json({
+      success: true,
+      correlationId,
+      sessionId,
+      message: 'Session finalized successfully'
+    });
+    
   } catch (error) {
-    logger.error(`Error al finalizar sesión ${req.params.sessionId}:`, error);
+    logger.error(`[${correlationId}] Error finalizing session`, error);
+    
     return res.status(500).json({
-      success: false,
-      error: "Error al finalizar sesión",
-      details: error instanceof Error ? error.message : "Error desconocido",
+      error: 'Session finalization error',
+      message: error instanceof Error ? error.message : 'Unknown error',
+      correlationId
+    });
+  }
+});
+
+/**
+ * Registrar una nueva plantilla de flujo
+ * POST /builderbot/templates/register
+ */
+router.post("/templates/register", async (req: TenantAuthRequest, res: Response) => {
+  const correlationId = uuidv4();
+  
+  try {
+    const { templateId, flow } = req.body;
+    
+    if (!templateId || !flow) {
+      return res.status(400).json({
+        error: 'Invalid request',
+        message: 'templateId and flow are required',
+        correlationId
+      });
+    }
+    
+    logger.info(`[${correlationId}] Registering new template`, {
+      tenantId: req.user!.tenantId,
+      templateId
+    });
+    
+    // Registrar la plantilla
+    registerNewTemplate(templateId, flow);
+    
+    // Registrar acción de auditoría
+    await logAuditAction({
+      tenantId: req.user!.tenantId!,
+      userId: req.user!.id,
+      actionType: AuditActionType.TEMPLATE_REGISTERED,
+      description: 'New flow template registered',
+      metadata: {
+        correlationId,
+        templateId,
+        flowType: typeof flow
+      }
+    });
+    
+    return res.status(200).json({
+      success: true,
+      correlationId,
+      templateId,
+      message: 'Template registered successfully'
+    });
+    
+  } catch (error) {
+    logger.error(`[${correlationId}] Error registering template`, error);
+    
+    return res.status(500).json({
+      error: 'Template registration error',
+      message: error instanceof Error ? error.message : 'Unknown error',
+      correlationId
     });
   }
 });

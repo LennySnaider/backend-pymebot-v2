@@ -7,7 +7,7 @@
 
 import OpenAI from "openai";
 import { type ChatCompletionMessageParam } from "openai/resources/chat";
-import { config } from "~/config";
+import { config } from "../config";
 
 class AIServices {
   private static apiKey: string;

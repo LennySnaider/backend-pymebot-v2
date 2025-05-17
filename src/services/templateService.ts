@@ -15,6 +15,7 @@ import {
   EditPermission,
   NodeType,
   FlowCreateData, // Importar tipo para creación
+  ConditionType,
 } from "../models/flow.types";
 import {
   getSupabaseClient,
@@ -244,7 +245,7 @@ export class TemplateService {
             } else if (Array.isArray(sourceNode.next)) {
               // Si ya es un array, añadimos la nueva conexión
               sourceNode.next.push({
-                condition: { type: "contains", value: edge.label || "" },
+                condition: { type: ConditionType.CONTAINS, value: edge.label || "" },
                 nextNodeId: edge.target,
               });
             } else {
@@ -252,11 +253,11 @@ export class TemplateService {
               const prevNext = sourceNode.next;
               sourceNode.next = [
                 {
-                  condition: { type: "contains", value: "default" },
+                  condition: { type: ConditionType.CONTAINS, value: "default" },
                   nextNodeId: prevNext,
                 },
                 {
-                  condition: { type: "contains", value: edge.label || "" },
+                  condition: { type: ConditionType.CONTAINS, value: edge.label || "" },
                   nextNodeId: edge.target,
                 },
               ];
@@ -478,12 +479,12 @@ export class TemplateService {
         return null;
       }
 
-      // Obtenemos la plantilla base (asegúrate que getTemplateById devuelva react_flow_json, version, created_by)
-      const template: ChatbotTemplateBase | null = await this.getTemplateById(
+      // Obtenemos la plantilla base
+      const templateBase = await this.getTemplateById(
         templateId
-      ); // Tipar explícitamente
+      ) as any as ChatbotTemplateBase | null;
 
-      if (!template || !template.react_flow_json) {
+      if (!templateBase || !templateBase.react_flow_json) {
         // Verificar que react_flow_json exista
         logger.error(
           `Plantilla ${templateId} no encontrada o no tiene react_flow_json`
@@ -494,7 +495,7 @@ export class TemplateService {
       // Extraer nodos y entryNodeId del JSON
       // Asumimos que react_flow_json tiene una estructura como { nodes: {...}, edges: [...], viewport: {...} }
       // y que puede tener un entryNodeId definido o lo inferimos.
-      const flowJson = template.react_flow_json as any; // Usar 'as any' o definir un tipo adecuado
+      const flowJson = templateBase.react_flow_json as any; // Usar 'as any' o definir un tipo adecuado
       const templateNodes = flowJson?.nodes || {};
       let entryNodeId = flowJson?.entryNodeId; // Intentar obtenerlo del JSON
 
@@ -534,18 +535,18 @@ export class TemplateService {
       // Creamos un nuevo flujo basado en la plantilla
       // Asegurarse que FlowCreateData esté definido y requiera los campos necesarios
       const flowData: FlowCreateData = {
-        name: customName || `${template.name || "Flow"} - Instance`, // Asegurar que name exista
-        description: template.description,
-        version: template.version?.toString() ?? "1", // Usar versión de plantilla o default '1'
-        // nodes: nodesToInsert, // 'nodes' no es una columna en la tabla 'flows', se guardan en 'flow_nodes'
-        entry_node_id: entryNodeId, // Columna en 'flows'
-        tenant_id: tenantId, // Columna en 'flows'
-        is_active: false, // No activamos automáticamente (columna en 'flows')
+        name: customName || `${templateBase.name || "Flow"} - Instance`, // Asegurar que name exista
+        description: templateBase.description,
+        version: templateBase.version?.toString() ?? "1", // Usar versión de plantilla o default '1'
+        nodes: nodesToInsert, // Agregar nodos como espera el tipo
+        entryNodeId: entryNodeId, // Cambiar a camelCase como espera el tipo
+        tenantId: tenantId, // Usar camelCase como espera el tipo
+        isActive: false, // Usar camelCase como espera el tipo
         tags: [], // Default vacío, 'tags' no viene de la plantilla base
         category: "General", // Default, 'category' no viene de la plantilla base
-        author: template.created_by || "system", // Usar created_by o default 'system' (columna en 'flows')
-        parent_template_id: templateId, // Referencia a la plantilla original (columna en 'flows')
-        edit_permission: EditPermission.CONTENT_ONLY, // Por defecto (columna en 'flows')
+        author: templateBase.created_by || "system", // Usar created_by o default 'system' (columna en 'flows')
+        parentTemplateId: templateId, // Usar camelCase como espera el tipo
+        editPermission: EditPermission.CONTENT_ONLY, // Usar camelCase como espera el tipo
         // 'isTemplate' no es una columna en 'flows'
       };
 
@@ -570,7 +571,7 @@ export class TemplateService {
         resourceName: flowData.name,
         details: {
           templateId,
-          templateName: template.name,
+          templateName: templateBase.name,
           customName: !!customName,
         },
         role: userRole,
@@ -716,8 +717,8 @@ export class TemplateService {
             // Permitimos actualizar solo ciertos campos de metadata (ejemplos)
             metadata: {
               ...flow.nodes[nodeId].metadata,
-              ...(updateData.nodes[nodeId].metadata?.role
-                ? { role: updateData.nodes[nodeId].metadata.role }
+              ...((updateData.nodes[nodeId].metadata as any)?.role
+                ? { role: (updateData.nodes[nodeId].metadata as any).role }
                 : {}),
               ...(updateData.nodes[nodeId].metadata?.delay
                 ? { delay: updateData.nodes[nodeId].metadata.delay }

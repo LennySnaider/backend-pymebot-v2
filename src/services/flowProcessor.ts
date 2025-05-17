@@ -18,7 +18,15 @@ import {
   ConditionalNext,
   ConditionType,
 } from "../models/flow.types";
+import { ExtendedFlowState } from "../models/extendedFlow.types";
+import {
+  processButtonsNode,
+  processListNode,
+} from "./buttonProcessor";
 import logger from "../utils/logger";
+import { replaceVariablesEnhanced } from "../utils/variableReplacerFix";
+import { processFinalText } from "../utils/finalReplacer";
+import { processCompositeMessage, parseMessageWithEmbeddedMedia, CompositeMessage } from "../utils/compositeMessageProcessor";
 
 // Tipo para el callback de notificación de nodos
 type NodeVisitCallback = (nodeId: string) => void;
@@ -49,7 +57,7 @@ export async function processFlowMessage(
   onNodeVisit?: NodeVisitCallback
 ): Promise<{
   response: string;
-  state: FlowState;
+  state: FlowState | ExtendedFlowState;
   metrics?: ProcessMetrics;
 }> {
   try {
@@ -66,7 +74,7 @@ export async function processFlowMessage(
     };
 
     // Si no hay estado previo, comenzamos desde el nodo de entrada
-    const state = prevState || {
+    const state: ExtendedFlowState = prevState || {
       flowId: flow.id,
       currentNodeId: flow.entryNodeId,
       context: {},
@@ -75,6 +83,8 @@ export async function processFlowMessage(
       lastUpdatedAt: new Date(),
       userId,
       sessionId,
+      variables: {},
+      tenantId: 'default'
     };
 
     // Actualizamos el contexto con el nuevo mensaje
@@ -119,10 +129,25 @@ export async function processFlowMessage(
       )}..." (${nodesVisited} nodos visitados)`
     );
 
+    // Asegurarnos de procesar las variables en la respuesta final
+    const tenantId = state.tenantId || (state.context && state.context.tenantId) || 'default';
+    let finalResponse = result.response || "Lo siento, no pude procesar tu solicitud correctamente.";
+    
+    try {
+      // Procesamos el texto final para asegurar que todas las variables sean reemplazadas
+      finalResponse = await processFinalText(finalResponse, {
+        ...state,
+        ...state.context,
+        ...(state.variables || {})
+      }, tenantId);
+      logger.debug(`Variables procesadas en respuesta final`);
+    } catch (error) {
+      logger.error(`Error al procesar variables en respuesta final: ${error}`);
+      // Seguimos con la respuesta original si hay error
+    }
+    
     return {
-      response:
-        result.response ||
-        "Lo siento, no pude procesar tu solicitud correctamente.",
+      response: finalResponse,
       state,
       metrics,
     };
@@ -141,8 +166,23 @@ export async function processFlowMessage(
       sessionId,
     };
 
+    // Incluso en caso de error, intentamos procesar las variables en la respuesta
+    const tenantId = (state as ExtendedFlowState).tenantId || (state.context && state.context.tenantId) || 'default';
+    let errorResponse = "Ha ocurrido un error al procesar tu mensaje.";
+    
+    try {
+      // Procesamos el texto de error para asegurar que todas las variables sean reemplazadas
+      errorResponse = await processFinalText(errorResponse, {
+        ...state,
+        ...state.context,
+        ...((state as ExtendedFlowState).variables || {})
+      }, tenantId);
+    } catch (secondError) {
+      // Ignoramos errores al procesar el mensaje de error
+    }
+    
     return {
-      response: "Ha ocurrido un error al procesar tu mensaje.",
+      response: errorResponse,
       state,
       metrics: {
         tokensUsed: 10, // Valor nominal para errores
@@ -162,7 +202,7 @@ export async function processFlowMessage(
  */
 export async function processNode(
   flow: RuntimeFlow,
-  state: FlowState,
+  state: ExtendedFlowState,
   onNodeVisit?: NodeVisitCallback
 ): Promise<NodeProcessResult> {
   try {
@@ -206,8 +246,22 @@ export async function processNode(
       // Si aún no hay nodo, devolvemos error
       if (!node) {
         logger.error(`No se encontró ningún nodo alternativo en flujo ${flow.id}`);
+        // Incluso en los mensajes de error, procesamos las variables
+        const tenantId = state.tenantId || (state.context && state.context.tenantId) || 'default';
+        let errorMessage = "Lo siento, ocurrió un error en el flujo de conversación. Estamos trabajando para solucionarlo.";
+        
+        try {
+          errorMessage = await processFinalText(errorMessage, {
+            ...state,
+            ...state.context,
+            ...(state.variables || {})
+          }, tenantId);
+        } catch (processingError) {
+          // Si hay error al procesar, usamos el mensaje original
+        }
+        
         return {
-          response: "Lo siento, ocurrió un error en el flujo de conversación. Estamos trabajando para solucionarlo.",
+          response: errorMessage,
           error: `Nodo ${state.currentNodeId} no encontrado y no hay nodos alternativos disponibles`,
         };
       }
@@ -276,6 +330,18 @@ export async function processNode(
         logger.info(`Procesando nodo STT ${node.id}`);
         return processSTTNode(node, flow, state, onNodeVisit);
 
+      case NodeType.BUTTONS:
+      case NodeType.BUTTONS_NODE:
+        // Para nodos de botones, presentamos opciones al usuario
+        logger.info(`Procesando nodo de botones ${node.id}`);
+        return processButtonsNode(node, flow, state, onNodeVisit);
+        
+      case NodeType.LIST:
+      case NodeType.LIST_NODE:
+        // Para nodos de lista, presentamos una lista de opciones al usuario
+        logger.info(`Procesando nodo de lista ${node.id}`);
+        return processListNode(node, flow, state, onNodeVisit);
+
       default:
         logger.warn(
           `Tipo de nodo no implementado específicamente: ${node.type} (normalizado: ${nodeType})`
@@ -298,8 +364,22 @@ export async function processNode(
     }
   } catch (error) {
     logger.error(`Error al procesar nodo ${state.currentNodeId}:`, error);
+    // Procesar variables en mensaje de error
+    let errorMessage = "Error interno al procesar el flujo.";
+    const tenantId = state.tenantId || (state.context && state.context.tenantId) || 'default';
+    
+    try {
+      errorMessage = await processFinalText(errorMessage, {
+        ...state,
+        ...state.context,
+        ...(state.variables || {})
+      }, tenantId);
+    } catch (processingError) {
+      // Si hay error al procesar, usamos el mensaje original
+    }
+    
     return {
-      response: "Error interno al procesar el flujo.",
+      response: errorMessage,
       error: error instanceof Error ? error.message : "Error desconocido",
     };
   }
@@ -420,7 +500,7 @@ function normalizeNodeType(nodeType: string): NodeType {
 export async function processStartNode(
   node: FlowNode,
   flow: RuntimeFlow,
-  state: FlowState,
+  state: ExtendedFlowState,
   onNodeVisit?: NodeVisitCallback
 ): Promise<NodeProcessResult> {
   // Los nodos de inicio simplemente pasan al siguiente nodo
@@ -435,8 +515,23 @@ export async function processStartNode(
   }
 
   // Si no hay siguiente nodo (raro para un nodo de inicio), devolvemos un mensaje genérico
+  // Procesar las variables en el mensaje de bienvenida
+  const tenantId = state.tenantId || (state.context && state.context.tenantId) || 'default';
+  let welcomeMessage = node.content || "Bienvenido al sistema de chat.";
+  
+  try {
+    welcomeMessage = await processFinalText(welcomeMessage, {
+      ...state,
+      ...state.context,
+      ...(state.variables || {})
+    }, tenantId);
+  } catch (error) {
+    logger.error(`Error al procesar variables en nodo de inicio: ${error}`);
+    // Seguimos con el contenido original si hay error
+  }
+  
   return {
-    response: node.content || "Bienvenido al sistema de chat.",
+    response: welcomeMessage,
   };
 }
 
@@ -446,15 +541,31 @@ export async function processStartNode(
 export async function processEndNode(
   node: FlowNode,
   flow: RuntimeFlow,
-  state: FlowState
+  state: ExtendedFlowState
 ): Promise<NodeProcessResult> {
   // Agregamos el mensaje de fin a la historia
   state.history.push(node.content);
   logger.info(`Procesando nodo final ${node.id}: "${node.content}"`);
 
+  // Procesamos las variables en el mensaje final
+  const tenantId = state.tenantId || (state.context && state.context.tenantId) || 'default';
+  let finalContent = node.content || "Fin de la conversación.";
+  
+  try {
+    // Asegurarnos de que las variables se reemplacen correctamente
+    finalContent = await processFinalText(finalContent, {
+      ...state,
+      ...state.context,
+      ...(state.variables || {})
+    }, tenantId);
+  } catch (error) {
+    logger.error(`Error al procesar variables en nodo final: ${error}`);
+    // Seguimos con el contenido original si hay error
+  }
+  
   // Devolvemos el mensaje del nodo final
   return {
-    response: node.content || "Fin de la conversación.",
+    response: finalContent,
   };
 }
 
@@ -464,40 +575,218 @@ export async function processEndNode(
 export async function processMessageNode(
   node: FlowNode,
   flow: RuntimeFlow,
-  state: FlowState,
+  state: ExtendedFlowState,
   onNodeVisit?: NodeVisitCallback
 ): Promise<NodeProcessResult> {
-  // Agregamos el mensaje a la historia
-  state.history.push(node.content);
-  logger.info(
-    `Procesando nodo de mensaje ${node.id}: "${node.content.substring(
-      0,
-      50
-    )}..."`
-  );
+  let messageContent = node.content;
+  let mediaUrl = (node.metadata as any)?.media || (node.metadata as any)?.imageUrl || (node.metadata as any)?.audioUrl || (node.metadata as any)?.videoUrl;
+  let mediaType = (node.metadata as any)?.mediaType;
+  let mediaCaption = (node.metadata as any)?.caption || (node.metadata as any)?.mediaCaption;
+
+  // Verificar si el nodo está en modo "auto" para generación dinámica
+  const isAutoMode = node.metadata?.mode === "auto";
+
+  // Si está en modo "auto" y hay plantilla/prompt, generar contenido
+  if (isAutoMode && node.metadata?.template) {
+    try {
+      logger.info(`Nodo de mensaje ${node.id} en modo AUTO - Generando contenido dinámico`);
+
+      // Construir mensaje con variables del contexto
+      const template = node.metadata.template as string;
+      
+      // Combinamos todas las variables de estado.context y otras fuentes
+      const allVariables = {
+        ...state.context,
+        ...state,
+        ...(state.variables || {}),
+      };
+      
+      // Procesamos el template usando todas las variables disponibles
+      // Utilizamos replaceVariablesEnhanced para mejor manejo de variables
+      messageContent = replaceVariablesEnhanced(template, allVariables);
+
+      // Si no pudo reemplazar placeholders, usar plantilla original
+      if (!messageContent || messageContent.trim() === "") {
+        messageContent = template;
+      }
+
+      logger.info(`Mensaje dinámico generado: "${messageContent.substring(0, 50)}..."`);
+    } catch (templateError) {
+      logger.error(`Error al generar mensaje dinámico: ${templateError}`);
+      // Mantener el contenido original en caso de error
+    }
+  }
+  // Si el contenido está vacío, proporcionar un valor por defecto contextual
+  else if (!messageContent || messageContent.trim() === "") {
+    const userMessage = state.context.lastUserMessage || "";
+    messageContent = `He recibido tu mensaje${userMessage ? `: "${userMessage.substring(0, 30)}..."` : ""}. ¿Cómo puedo ayudarte?`;
+    logger.warn(`Nodo mensaje ${node.id} con contenido vacío, usando respuesta genérica`);
+  }
+  
+  // Verificamos si hay medios embebidos en el mensaje
+  const parsedMessage = parseMessageWithEmbeddedMedia(messageContent);
+  if (parsedMessage.type === 'composite' && parsedMessage.media && !mediaUrl) {
+    // Si hay medios embebidos en el mensaje y no hay medios explícitos, usamos los embebidos
+    if (typeof parsedMessage.media === 'string') {
+      mediaUrl = parsedMessage.media;
+    } else {
+      mediaUrl = parsedMessage.media.url;
+      mediaType = parsedMessage.media.type;
+      mediaCaption = parsedMessage.media.caption;
+    }
+    // Actualizamos el mensaje sin la referencia al medio
+    messageContent = parsedMessage.text;
+  }
+
+  // Creamos un mensaje compuesto con el contenido y los medios
+  const compositeMessage: CompositeMessage = {
+    text: messageContent,
+    type: mediaUrl ? 'composite' : 'text'
+  };
+  
+  // Si hay medios, los agregamos al mensaje compuesto
+  if (mediaUrl) {
+    compositeMessage.media = {
+      url: mediaUrl,
+      type: mediaType as any,
+      caption: mediaCaption
+    };
+  }
+  
+  // Si hay botones definidos, los agregamos al mensaje compuesto
+  if ((node.metadata as any)?.buttons && Array.isArray((node.metadata as any).buttons) && (node.metadata as any).buttons.length > 0) {
+    compositeMessage.buttons = (node.metadata as any).buttons;
+    compositeMessage.type = 'buttons';
+  }
+
+  // Procesamos el mensaje compuesto para asegurar que todas las variables sean reemplazadas
+  // Obtenemos el tenantId del estado si está disponible
+  const tenantId = state.tenantId || (state.context && state.context.tenantId) || 'default';
+  let processedCompositeMessage: CompositeMessage;
+  
+  try {
+    // Procesamos el mensaje compuesto de forma asíncrona
+    processedCompositeMessage = await processCompositeMessage(compositeMessage, {
+      ...state,
+      ...state.context,
+      ...(state.variables || {})
+    }, tenantId);
+    
+    // Actualizamos el mensaje procesado
+    messageContent = processedCompositeMessage.text;
+    
+    // Agregamos el mensaje procesado a la historia
+    state.history.push(messageContent);
+    logger.info(
+      `Procesando nodo de mensaje ${node.id}: "${messageContent.substring(0, 50)}..."`
+    );
+  } catch (error) {
+    logger.error(`Error al procesar mensaje compuesto en nodo ${node.id}:`, error);
+    // En caso de error, seguimos con el mensaje original
+    processedCompositeMessage = compositeMessage;
+    state.history.push(messageContent);
+  }
 
   // Obtenemos el siguiente nodo (si existe)
   const nextNodeId = getNextNodeId(node);
 
-  // En el caso de mensajes, siempre devolvemos la respuesta del mensaje actual
-  // Y guardamos el siguiente nodo para procesarlo en la próxima interacción
-  if (nextNodeId) {
+  // Verificar si el nodo debe esperar respuesta del usuario
+  const waitForResponse = (node.metadata as any)?.waitForResponse === true;
+  
+  // Si el nodo está configurado para no esperar respuesta y hay un siguiente nodo, 
+  // procesamos automáticamente el siguiente nodo (auto-flow)
+  if (nextNodeId && !waitForResponse) {
+    logger.info(`Nodo de mensaje ${node.id} configurado para auto-flow. Continuando a nodo ${nextNodeId}`);
     state.currentNodeId = nextNodeId;
+    
+    // Primero respondemos con el mensaje actual
+    // Esto es importante para mantener la conversación fluida
+    let result: NodeProcessResult = {
+      response: messageContent,
+      context: {
+        responseType: processedCompositeMessage.type,
+        messageData: processedCompositeMessage
+      }
+    };
+    
+    // Luego procesamos recursivamente el siguiente nodo
+    // Esto permitirá encadenar múltiples nodos automáticos
+    try {
+      // Cambiamos al siguiente nodo
+      state.currentNodeId = nextNodeId;
+      
+      // Procesamos el siguiente nodo
+      const nextResult = await processNode(flow, state, onNodeVisit);
+      
+      // Si el siguiente nodo generó una respuesta, la concatenamos
+      if (nextResult.response) {
+        result.response = `${messageContent}\n\n${nextResult.response}`;
+      }
+      
+      // Propagamos cualquier otro resultado del nodo siguiente
+      result.nextNodeId = nextResult.nextNodeId;
+      result.metrics = nextResult.metrics;
+      result.shouldWait = nextResult.shouldWait;
+      
+      // Combinamos los contextos
+      if (nextResult.context) {
+        result.context = {
+          ...result.context,
+          ...nextResult.context
+        };
+      }
+      
+      return result;
+    }
+    catch (error) {
+      logger.error(`Error en auto-flow después de nodo ${node.id}:`, error);
+      // Si hay error en el auto-flow, al menos devolvemos el mensaje actual
+      return {
+        response: messageContent,
+        error: `Error en auto-flow: ${error instanceof Error ? error.message : 'Error desconocido'}`,
+        context: {
+          responseType: processedCompositeMessage.type,
+          messageData: processedCompositeMessage
+        }
+      };
+    }
+  }
+  // Si el nodo debe esperar respuesta o no hay siguiente nodo
+  else {
+    state.currentNodeId = nextNodeId || node.id;
     logger.debug(
-      `Mensaje: Guardando próximo nodo ${nextNodeId} para siguiente interacción`
+      `Mensaje: ${waitForResponse ? 'Esperando respuesta del usuario' : 'No hay siguiente nodo'}`
     );
 
-    // Devolvemos el contenido del mensaje ACTUAL, no seguimos procesando
+    // Devolvemos el contenido del mensaje procesado
     return {
-      response: node.content,
+      response: messageContent,
       nextNodeId: nextNodeId,
+      shouldWait: waitForResponse,
+      context: {
+        responseType: processedCompositeMessage.type,
+        messageData: processedCompositeMessage
+      }
     };
   }
+}
 
-  // Si no hay siguiente nodo, devolvemos la respuesta
-  return {
-    response: node.content,
-  };
+/**
+ * Función auxiliar para reemplazar placeholders en plantillas de mensajes
+ * Ejemplo: "Hola {nombre}, tu cita es el {fecha}" -> "Hola Juan, tu cita es el 15/05/2025"
+ * Utiliza la función mejorada replaceVariablesEnhanced para soportar todos los formatos de variables
+ * @deprecated Use replaceVariablesEnhanced from variableReplacerFix.ts instead
+ */
+function replacePlaceholders(template: string, context: Record<string, any>): string {
+  if (!template) return '';
+  
+  try {
+    // Utilizar directamente la función mejorada
+    return replaceVariablesEnhanced(template, context);
+  } catch (error) {
+    logger.error(`Error al reemplazar placeholders: ${error}`);
+    return template; // Devolver plantilla original en caso de error
+  }
 }
 
 /**
@@ -506,7 +795,7 @@ export async function processMessageNode(
 export async function processConditionNode(
   node: FlowNode,
   flow: RuntimeFlow,
-  state: FlowState,
+  state: ExtendedFlowState,
   onNodeVisit?: NodeVisitCallback
 ): Promise<NodeProcessResult> {
   // Obtenemos las condiciones a evaluar y el mensaje del usuario
@@ -549,8 +838,22 @@ export async function processConditionNode(
   logger.info(
     `Ninguna condición cumplida en nodo ${node.id}, devolviendo respuesta por defecto`
   );
+  // Procesar variables en el mensaje por defecto
+  const tenantId = state.tenantId || (state.context && state.context.tenantId) || 'default';
+  let defaultMessage = "No entendí tu solicitud. ¿Podrías reformularla?";
+  
+  try {
+    defaultMessage = await processFinalText(defaultMessage, {
+      ...state,
+      ...state.context,
+      ...(state.variables || {})
+    }, tenantId);
+  } catch (error) {
+    // Si hay error al procesar, usamos el mensaje original
+  }
+  
   return {
-    response: "No entendí tu solicitud. ¿Podrías reformularla?",
+    response: defaultMessage,
   };
 }
 
@@ -560,7 +863,7 @@ export async function processConditionNode(
 export async function processActionNode(
   node: FlowNode,
   flow: RuntimeFlow,
-  state: FlowState,
+  state: ExtendedFlowState,
   onNodeVisit?: NodeVisitCallback
 ): Promise<NodeProcessResult> {
   // Por ahora, simplemente pasamos al siguiente nodo
@@ -576,8 +879,22 @@ export async function processActionNode(
     return processNode(flow, state, onNodeVisit);
   }
 
+  // Procesar variables en el mensaje de acción
+  const tenantId = state.tenantId || (state.context && state.context.tenantId) || 'default';
+  let actionMessage = "Acción ejecutada correctamente.";
+  
+  try {
+    actionMessage = await processFinalText(actionMessage, {
+      ...state,
+      ...state.context,
+      ...(state.variables || {})
+    }, tenantId);
+  } catch (error) {
+    // Si hay error al procesar, usamos el mensaje original
+  }
+  
   return {
-    response: "Acción ejecutada correctamente.",
+    response: actionMessage,
   };
 }
 
@@ -587,7 +904,7 @@ export async function processActionNode(
 export async function processApiCallNode(
   node: FlowNode,
   flow: RuntimeFlow,
-  state: FlowState,
+  state: ExtendedFlowState,
   onNodeVisit?: NodeVisitCallback
 ): Promise<NodeProcessResult> {
   // Esto podría ampliarse con una implementación real de llamadas a API
@@ -608,8 +925,22 @@ export async function processApiCallNode(
     return processNode(flow, state, onNodeVisit);
   }
 
+  // Procesar variables en el mensaje de API
+  const tenantId = state.tenantId || (state.context && state.context.tenantId) || 'default';
+  let apiMessage = "Llamada a API completada.";
+  
+  try {
+    apiMessage = await processFinalText(apiMessage, {
+      ...state,
+      ...state.context,
+      ...(state.variables || {})
+    }, tenantId);
+  } catch (error) {
+    // Si hay error al procesar, usamos el mensaje original
+  }
+  
   return {
-    response: "Llamada a API completada.",
+    response: apiMessage,
   };
 }
 
@@ -619,7 +950,7 @@ export async function processApiCallNode(
 export async function processInputNode(
   node: FlowNode,
   flow: RuntimeFlow,
-  state: FlowState,
+  state: ExtendedFlowState,
   onNodeVisit?: NodeVisitCallback
 ): Promise<NodeProcessResult> {
   // Guardamos la pregunta en la historia
@@ -642,9 +973,24 @@ export async function processInputNode(
     return processNode(flow, state, onNodeVisit);
   }
 
+  // Procesar variables en el mensaje de entrada
+  const tenantId = state.tenantId || (state.context && state.context.tenantId) || 'default';
+  let inputMessage = node.content;
+  
+  try {
+    inputMessage = await processFinalText(inputMessage, {
+      ...state,
+      ...state.context,
+      ...(state.variables || {})
+    }, tenantId);
+  } catch (error) {
+    logger.error(`Error al procesar variables en nodo de entrada: ${error}`);
+    // Seguimos con el contenido original si hay error
+  }
+  
   // Si no hay siguiente nodo, devolvemos la pregunta como respuesta
   return {
-    response: node.content,
+    response: inputMessage,
   };
 }
 
@@ -730,13 +1076,10 @@ export async function processSTTNode(
 export async function processAINode(
   node: FlowNode,
   flow: RuntimeFlow,
-  state: FlowState,
+  state: ExtendedFlowState,
   onNodeVisit?: NodeVisitCallback
 ): Promise<NodeProcessResult> {
   try {
-    // En una implementación real, aquí llamaríamos a una API de IA
-    // Por ahora, usamos el contenido del nodo como respuesta
-
     logger.info(
       `Procesando nodo de IA ${
         node.id
@@ -747,26 +1090,100 @@ export async function processAINode(
     const userMessage = state.context.lastUserMessage || "";
     const nodeContent = node.content || "";
 
-    // Estimamos tokens usados: entrada + salida + sistema
-    const inputTokens = Math.ceil(userMessage.length / 4);
-    const promptTokens = Math.ceil(nodeContent.length / 4);
+    // Verificar si el nodo está configurado para usar el modo "auto" de OpenAI
+    const isAutoMode =
+      node.metadata?.mode === "auto" ||
+      ((!nodeContent || nodeContent.trim() === "Respuesta AI") &&
+      node.metadata?.prompt && typeof node.metadata.prompt === 'string');
+
+    // Inicializar variables para métricas
+    let inputTokens = Math.ceil(userMessage.length / 4);
+    let promptTokens = Math.ceil(nodeContent.length / 4);
     let systemPromptTokens = 0;
+    let outputTokens = 0;
+    let responseText = nodeContent;
 
     // Si hay un prompt de sistema en los metadatos, lo contamos
     if (node.metadata?.systemPrompt) {
       systemPromptTokens = Math.ceil(node.metadata.systemPrompt.length / 4);
     }
 
-    // Usamos la configuración del nodo (en una implementación real se usaría para la API)
+    // Configuración para API de IA
     const aiSettings = {
-      model: node.metadata?.model || "default-model",
+      model: node.metadata?.model || "gpt-4o-mini",
       temperature: node.metadata?.temperature || 0.7,
       systemPrompt: node.metadata?.systemPrompt || "",
+      prompt: node.metadata?.prompt || "",
+      maxTokens: node.metadata?.maxTokens || 500
     };
 
-    // CAMBIO IMPORTANTE: Usamos el contenido del nodo como respuesta
-    // En lugar de generar una respuesta genérica
-    let responseText = nodeContent;
+    // INTEGRACIÓN CON OPENAI - Llamada real a la API en modo "auto"
+    if (isAutoMode) {
+      try {
+        logger.info(`Nodo IA ${node.id} configurado en modo AUTO - Llamando a OpenAI`);
+
+        // Importamos dinámicamente para evitar ciclos de dependencia
+        const AIServices = (await import('../services/aiServices')).default;
+
+        // Verificamos que tengamos la API Key configurada
+        if (!process.env.OPENAI_API_KEY) {
+          throw new Error("API Key de OpenAI no configurada en variables de entorno");
+        }
+
+        // Inicializamos el servicio de IA
+        const aiService = new AIServices(process.env.OPENAI_API_KEY);
+
+        // Construir el prompt completo
+        let prompt = aiSettings.systemPrompt || "";
+        if (aiSettings.prompt) {
+          prompt += "\n\n" + aiSettings.prompt;
+        }
+
+        // Si no hay un prompt configurado, crear uno genérico
+        if (!prompt || prompt.trim() === "") {
+          prompt = "Eres un asistente virtual amable y útil. Responde de manera concisa y profesional.";
+        }
+
+        // Crear el historial de mensajes para la API
+        const messages = [
+          { role: "user", content: userMessage }
+        ];
+
+        // Obtenemos respuesta real de OpenAI
+        responseText = await aiService.chat(prompt, messages);
+        logger.info(`OpenAI respondió con éxito: "${responseText.substring(0, 50)}..."`);
+
+        // Calcular tokens de salida
+        outputTokens = Math.ceil(responseText.length / 4);
+      } catch (openaiError) {
+        logger.error(`Error al llamar a OpenAI: ${openaiError}`);
+
+        // En caso de error, caemos a una respuesta fallback
+        responseText = `Lo siento, estoy teniendo problemas para procesar tu solicitud. ¿Podrías intentarlo de nuevo?`;
+
+        // También intentamos generar una respuesta contextual como backup
+        if (userMessage) {
+          responseText += ` He recibido tu mensaje: "${userMessage.substring(0, 30)}..."`;
+        }
+      }
+    }
+    // MODO ESTÁTICO - Usar el contenido predefinido del nodo
+    else {
+      // Si el contenido está vacío o es exactamente "Respuesta AI", generamos una respuesta genérica
+      if (!responseText || responseText.trim() === "" || responseText.trim() === "Respuesta AI") {
+        logger.warn(`Nodo IA ${node.id} tiene contenido vacío o es solo "Respuesta AI". Usando respuesta alternativa.`);
+        // Usar el prompt como respuesta si está disponible
+        if (node.metadata?.prompt && typeof node.metadata.prompt === 'string' && node.metadata.prompt.trim() !== '') {
+          responseText = `Respuesta generada según tu solicitud: "${state.context.lastUserMessage}"`;
+          logger.info(`Usando respuesta generada basada en el prompt`);
+        } else {
+          // Fallback a una respuesta genérica informativa
+          responseText = `He recibido tu mensaje: "${state.context.lastUserMessage}". ¿En qué más puedo ayudarte?`;
+          logger.info(`Usando respuesta genérica de fallback`);
+        }
+      }
+      logger.info(`Nodo IA ${node.id} usando contenido estático predefinido`);
+    }
 
     // Si es un nodo de Agente de Voz IA, incluimos información adicional para el frontend
     if (node.type === NodeType.AI_VOICE_AGENT) {
@@ -787,8 +1204,10 @@ export async function processAINode(
       logger.debug(`IA: Guardando respuesta en variable ${varName}`);
     }
 
-    // Simulamos tokens de salida
-    const outputTokens = Math.ceil(responseText.length / 4);
+    // Actualizamos tokens de salida si no se calcularon antes
+    if (outputTokens === 0) {
+      outputTokens = Math.ceil(responseText.length / 4);
+    }
 
     // Totales de tokens para métricas
     const totalTokens =
@@ -818,6 +1237,25 @@ export async function processAINode(
     logger.info(
       `Nodo IA ${node.id} respondió: "${responseText.substring(0, 50)}..."`
     );
+
+    // Procesamos el texto final para asegurar que todas las variables sean reemplazadas
+    // Obtenemos el tenantId del estado si está disponible
+    const tenantId = (state as ExtendedFlowState).tenantId || (state.context && state.context.tenantId) || 'default';
+    
+    try {
+      // Procesamos el texto final de forma asíncrona
+      const processedText = await processFinalText(responseText, {
+        ...state,
+        ...state.context,
+        ...((state as ExtendedFlowState).variables || {})
+      }, tenantId);
+      
+      // Actualizamos el texto procesado
+      responseText = processedText;
+    } catch (error) {
+      logger.error(`Error al procesar texto final en nodo IA ${node.id}:`, error);
+      // En caso de error, seguimos con el texto original
+    }
 
     return {
       response: responseText,

@@ -1,771 +1,555 @@
 /**
  * src/services/templateConverter.ts
  * 
- * Servicio para convertir plantillas JSON de flujos visuales
- * en flujos de BuilderBot utilizables en el sistema.
- * 
- * @version 1.0.0
+ * Servicio para convertir plantillas visuales a flujos de BuilderBot
+ * @version 6.0.0 - Corregido para construir flujos encadenados correctamente
  * @created 2025-05-10
+ * @updated 2025-05-16
  */
 
-import { addKeyword, addAnswer, createFlow } from "@builderbot/bot";
-import { FlowNode, NodeType, ReactFlowData } from "../models/flow.types";
-import logger from "../utils/logger";
-import { v4 as uuidv4 } from "uuid";
+import { createFlow, addKeyword, addAnswer } from '@builderbot/bot';
+import logger from '../utils/logger';
+import { replaceVariables } from '../utils/variableReplacer';
+import { 
+  ReactFlowData, 
+  ReactFlowNode, 
+  ReactFlowEdge,
+  FlowNode
+} from '../models/flow.types';
+import { enqueueMessage } from './buttonNavigationQueue';
+import { getSessionContext } from './sessionContext';
 
-// Tipos para la conversión
-interface NodeMap {
-  [id: string]: any; // Nodo de BuilderBot
-}
+// Store global para flujos creados
+const globalButtonFlows: Record<string, any> = {};
 
-interface FlowConversionResult {
+/**
+ * Interfaz para el resultado de la conversión
+ */
+export interface FlowConversionResult {
   flow: any; // Flujo de BuilderBot
-  entryKeywords: string[]; // Palabras clave de entrada
-  nodeMap: NodeMap; // Mapa de nodos convertidos
+  entryKeywords: string[];
+  nodeMap: Record<string, any>;
 }
 
 /**
- * Convierte una plantilla JSON en un flujo de BuilderBot
- * 
- * @param templateData Datos de la plantilla (JSON o string)
- * @returns Flujo de BuilderBot listo para usar
+ * Convierte una plantilla de flujo visual a un flujo de BuilderBot
+ * @param templateId ID de la plantilla
+ * @returns Flujo compatible con BuilderBot
  */
-export const convertTemplateToBuilderbotFlow = (
-  templateData: any
-): FlowConversionResult | null => {
+export async function convertTemplateToBuilderbotFlow(
+  templateId: string,
+  tenantId?: string,
+  sessionId?: string
+): Promise<FlowConversionResult> {
   try {
-    // Si nos dan un string, lo parseamos como JSON
-    let templateJson: any;
-    if (typeof templateData === 'string') {
-      try {
-        templateJson = JSON.parse(templateData);
-      } catch (parseError) {
-        logger.error(`Error al parsear JSON de plantilla: ${parseError}`);
-        return null;
-      }
-    } else {
-      templateJson = templateData;
-    }
-
-    // Extraemos el react_flow_json si existe
-    let reactFlowData: ReactFlowData;
-    if (templateJson.react_flow_json) {
-      if (typeof templateJson.react_flow_json === 'string') {
-        reactFlowData = JSON.parse(templateJson.react_flow_json);
-      } else {
-        reactFlowData = templateJson.react_flow_json;
-      }
-    } else if (templateJson.nodes && templateJson.edges) {
-      // La plantilla ya está en formato ReactFlowData
-      reactFlowData = templateJson;
-    } else {
-      logger.error('Formato de plantilla inválido, no contiene datos de flujo');
-      return null;
-    }
-
-    // Validamos la estructura básica
-    if (!reactFlowData.nodes || !reactFlowData.edges) {
-      logger.error('Datos de flujo inválidos, faltan nodos o conexiones');
-      return null;
-    }
-
-    // Encontramos el nodo de inicio (startNode)
-    const startNode = reactFlowData.nodes.find(node => 
-      node.type === 'startNode' || 
-      node.type === 'start-node' || 
-      node.type === 'START'
-    );
-
-    if (!startNode) {
-      logger.error('No se encontró nodo de inicio en la plantilla');
-      return null;
-    }
-
-    // Mapa para rastrear los nodos convertidos
-    const nodeMap: NodeMap = {};
+    logger.info(`Iniciando conversión de plantilla: ${templateId}`);
+    logger.info(`Contexto: tenantId=${tenantId}, sessionId=${sessionId}`);
     
-    // Palabras clave para activar el flujo
-    // Usar una lista amplia para aumentar probabilidad de coincidencia
-    // IMPORTANTE: BuilderBot usa mayúsculas para las coincidencias
-    const entryKeywords = [
-      'HOLA', 'OLA', 'INICIO', 'COMENZAR', 'EMPEZAR', 
-      'AYUDA', 'HELP', 'INFO', 'INFORMACIÓN',
-      'BUENOS DIAS', 'BUENAS TARDES', 'BUENAS NOCHES',
-      'START', 'HI', 'HELLO'
-    ];
+    // Cargar la plantilla desde la base de datos
+    const { getTemplateById } = await import('./supabase');
+    const template = await getTemplateById(templateId);
     
-    // Si la plantilla tiene un nombre, lo usamos como palabra clave adicional
-    if (templateJson.name) {
-      entryKeywords.push(templateJson.name.toUpperCase());
+    if (!template) {
+      logger.error(`Plantilla no encontrada: ${templateId}`);
+      throw new Error(`Plantilla ${templateId} no encontrada`);
     }
-
-    // Creamos el flujo base con el punto de entrada
-    // IMPORTANTE: Pasar las palabras clave en mayúsculas
+    
+    // Debug logging para ver la estructura de la plantilla
+    logger.info(`Plantilla recuperada:`, {
+      id: template.id,
+      name: template.name,
+      hasReactFlowJson: !!template.react_flow_json,
+      keys: Object.keys(template)
+    });
+    
+    let nodes: Record<string, any> = {};
+    let edges: ReactFlowEdge[] = [];
+    let startNodeId: string | undefined;
+    
+    // Priorizar react_flow_json si existe
+    if (template.react_flow_json && typeof template.react_flow_json === 'object') {
+      const templateJson = template.react_flow_json;
+      
+      if (templateJson.nodes && templateJson.edges && Array.isArray(templateJson.nodes)) {
+        // Formato con arrays de nodes y edges
+        const nodeArray = templateJson.nodes as any[];
+        edges = templateJson.edges;
+        
+        // Convertir array de nodos a mapa
+        nodeArray.forEach(node => {
+          nodes[node.id] = node;
+        });
+        
+        // Encontrar nodo inicial
+        const startNodeObj = nodeArray.find(n => 
+          n.type === 'startNode' || 
+          n.type === 'start-node' || 
+          n.id === 'start-node'
+        );
+        startNodeId = startNodeObj?.id;
+        
+        logger.info(`Usando formato react_flow_json con ${nodeArray.length} nodos y ${edges.length} edges`);
+      }
+    }
+    
+    // Si no encontramos nodes/edges válidos, intentar con el formato de la API
+    if (Object.keys(nodes).length === 0) {
+      if (template.nodes && typeof template.nodes === 'object') {
+        nodes = template.nodes;
+        startNodeId = template.entryNodeId || 'start-node';
+        logger.info(`Usando formato de API con ${Object.keys(nodes).length} nodos`);
+      }
+    }
+    
+    if (Object.keys(nodes).length === 0) {
+      logger.error(`Plantilla ${templateId} sin nodos válidos`);
+      const emptyFlow = addKeyword(['EMPTY']);
+      return {
+        flow: createFlow([emptyFlow]),
+        entryKeywords: ['EMPTY'],
+        nodeMap: {}
+      };
+    }
+    
+    // Verificar que tenemos un nodo inicial
+    if (!startNodeId || !nodes[startNodeId]) {
+      logger.error(`No se encontró nodo inicial válido: ${startNodeId}`);
+      throw new Error('El flujo debe tener un nodo inicial válido');
+    }
+    
+    // Configurar palabras clave de entrada en minúsculas y mayúsculas
+    let entryKeywords = ['hola', 'HOLA', 'hello', 'HELLO', 'inicio', 'INICIO', 'start', 'START'];
+    const startNode = nodes[startNodeId];
+    
+    if (startNode.metadata?.keywords) {
+      const customKeywords = Array.isArray(startNode.metadata.keywords) 
+        ? startNode.metadata.keywords
+        : startNode.metadata.keywords.split(',').map((kw: string) => kw.trim());
+      
+      // Añadir cada palabra clave en minúsculas y mayúsculas
+      customKeywords.forEach((kw: string) => {
+        entryKeywords.push(kw.toLowerCase());
+        entryKeywords.push(kw.toUpperCase());
+      });
+    }
+    
+    if (template.name) {
+      entryKeywords.push(template.name.toLowerCase());
+      entryKeywords.push(template.name.toUpperCase());
+    }
+    
+    // Crear flujo principal con palabras clave
     logger.info(`Configurando palabras clave de entrada: ${entryKeywords.join(', ')}`);
-    const baseFlow = addKeyword(entryKeywords);
-    nodeMap[startNode.id] = baseFlow;
-
-    // Construimos el grafo de nodos a partir del nodo inicial
-    // Usamos un Set para rastrear los nodos procesados y evitar ciclos
-    const processedNodes = new Set<string>();
-    buildFlowFromNode(startNode.id, reactFlowData, nodeMap, processedNodes);
-
-    // Verificamos si todos los nodos fueron procesados
-    const allNodesProcessed = reactFlowData.nodes.every(node =>
-      nodeMap[node.id] !== undefined ||
-      node.type === 'endNode' ||
-      node.type === 'end-node' ||
-      node.type === 'END'
-    );
-
-    if (!allNodesProcessed) {
-      const missingNodes = reactFlowData.nodes
-        .filter(node =>
-          nodeMap[node.id] === undefined &&
-          node.type !== 'endNode' &&
-          node.type !== 'end-node' &&
-          node.type !== 'END'
-        )
-        .map(node => `${node.id} (${node.type})`);
-
-      logger.warn(`No se procesaron todos los nodos: ${missingNodes.join(', ')}`);
+    // addKeyword requiere al menos un string, asegurar que siempre hay uno  
+    if (entryKeywords.length === 0) {
+      entryKeywords = ['HOLA'];
     }
-
-    // Creamos el flujo final
-    const flow = createFlow([baseFlow]);
-
-    // Aseguramos que el flujo tenga los métodos y propiedades necesarios para BuilderBot
-    flow.addKeyword = baseFlow.addKeyword;
-    flow.addAnswer = baseFlow.addAnswer;
-    flow.addAction = baseFlow.addAction;
-    flow.flow = baseFlow; // Añadir una referencia al flujo base para compatibilidad
-
+    
+    // Construir el flujo completo de manera lineal
+    // CAMBIO IMPORTANTE: Agregar callback inicial para configurar tenantId y sessionId
+    let flowChain = addKeyword(entryKeywords as [string, ...string[]])
+      .addAction(async (ctx: any, { state, provider }: any) => {
+        // Usar los parámetros pasados a la función o buscar en el contexto
+        const metadata = ctx?._metadata || {};
+        const ctxTenantId = tenantId || metadata.tenantId || provider?.tenantId || 'default';
+        const ctxSessionId = sessionId || metadata.sessionId || provider?.sessionId || 'default';
+        
+        await state.update({
+          tenantId: ctxTenantId,
+          sessionId: ctxSessionId,
+          templateId,
+          initialized: true
+        });
+        
+        logger.info(`[templateConverter] Estado inicial configurado:`, {
+          tenantId: ctxTenantId,
+          sessionId: ctxSessionId,
+          templateId,
+          from: ctx.from
+        });
+      });
+    
+    // Obtener el primer nodo después del inicio
+    const firstNodeId = getNextNodeId(startNode, edges, nodes);
+    logger.info(`Primer nodo después del inicio: ${firstNodeId}`);
+    
+    if (firstNodeId) {
+      // Construir toda la cadena de flujo
+      flowChain = buildFlowChain(firstNodeId, flowChain, nodes, edges, new Set<string>());
+    } else {
+      // Si no hay siguiente nodo, agregar mensaje por defecto
+      logger.info('No se encontró siguiente nodo, agregando mensaje por defecto');
+      flowChain = flowChain.addAnswer('Hola, ¿en qué puedo ayudarte?');
+    }
+    
+    // Crear flujos adicionales para cada rama de botones
+    const allFlows = [flowChain];
+    const allNodeMap: Record<string, any> = { [startNodeId]: flowChain };
+    
+    // Mapa de flujos de botones para acceso rápido
+    const buttonFlowMap: Record<string, any> = {};
+    
+    // Buscar todos los nodos de botones y crear flujos para cada rama
+    Object.entries(nodes).forEach(([nodeId, node]) => {
+      if (node.type === 'buttonsNode' || node.type === 'buttons-node' || node.type === 'buttons') {
+        const buttons = node.metadata?.buttons || node.data?.buttons || [];
+        
+        // Para cada botón, crear un flujo que comience con su keyword
+        buttons.forEach((btn: any, index: number) => {
+          const keyword = `btn_${nodeId}_${index}`;
+          
+          // Buscar el edge que sale de este botón (handle específico)
+          const buttonEdge = edges.find(edge => 
+            edge.source === nodeId && 
+            edge.sourceHandle === `handle-${index}`
+          );
+          
+          if (buttonEdge) {
+            logger.info(`Creando flujo para botón ${index} (${btn.text || btn.label}) con keyword ${keyword}`);
+            
+            // También agregar el texto del botón como keyword adicional
+            const buttonTextKeyword = btn.text || btn.label || btn.body;
+            const buttonKeywords = [keyword];
+            if (buttonTextKeyword) {
+              buttonKeywords.push(buttonTextKeyword.toLowerCase());
+              buttonKeywords.push(buttonTextKeyword);
+            }
+            
+            logger.info(`Keywords para botón: ${buttonKeywords.join(', ')}`);
+            
+            // Crear un nuevo flujo que comience con estos keywords
+            let buttonFlow = addKeyword(buttonKeywords);
+            
+            // Construir el flujo a partir del nodo destino
+            buttonFlow = buildFlowChain(buttonEdge.target, buttonFlow, nodes, edges, new Set<string>());
+            
+            allFlows.push(buttonFlow);
+            allNodeMap[`${nodeId}_button_${index}`] = buttonFlow;
+            buttonFlowMap[keyword] = buttonFlow;
+            globalButtonFlows[keyword] = buttonFlow; // Almacenar globalmente
+          }
+        });
+      }
+    });
+    
+    
+    // Crear el flujo final con todos los subflujos
+    const createdFlow = createFlow(allFlows);
+    
+    logger.info(`Flujo creado exitosamente con ${allFlows.length} subflujos`);
+    logger.info(`Flujos de botones registrados: ${Object.keys(globalButtonFlows).join(', ')}`);
+    
     return {
-      flow,
+      flow: createdFlow,
       entryKeywords,
-      nodeMap
+      nodeMap: allNodeMap
     };
+    
   } catch (error) {
     logger.error('Error al convertir plantilla a flujo BuilderBot:', error);
-    return null;
+    throw error;
   }
-};
+}
 
 /**
- * Construye un flujo de BuilderBot a partir de un nodo específico
- * Con un enfoque mejorado para garantizar que los nodos padre se procesen antes
- *
- * @param currentNodeId ID del nodo actual
- * @param reactFlowData Datos del flujo visual
- * @param nodeMap Mapa de nodos ya convertidos
- * @param processedNodes Set de IDs de nodos ya procesados para evitar ciclos
- * @returns true si se construyó correctamente
+ * Construye la cadena de flujo de manera recursiva
  */
-const buildFlowFromNode = (
-  currentNodeId: string,
-  reactFlowData: ReactFlowData,
-  nodeMap: NodeMap,
-  processedNodes: Set<string> = new Set()
-): boolean => {
-  try {
-    // Evitar procesar el mismo nodo múltiples veces (prevenir ciclos)
-    if (processedNodes.has(currentNodeId)) {
-      return true; // Ya procesado anteriormente
-    }
-
-    // Marcar como procesado para esta ejecución
-    processedNodes.add(currentNodeId);
-
-    // Obtenemos el nodo actual
-    const currentNode = reactFlowData.nodes.find(node => node.id === currentNodeId);
-    if (!currentNode) {
-      logger.error(`Nodo ${currentNodeId} no encontrado en el flujo`);
-      return false;
-    }
-
-    // Obtenemos las conexiones salientes de este nodo
-    const outgoingEdges = reactFlowData.edges.filter(edge => edge.source === currentNodeId);
-
-    // Si no hay conexiones salientes y no es un nodo final, es un aviso
-    if (outgoingEdges.length === 0 &&
-        currentNode.type !== 'endNode' &&
-        currentNode.type !== 'end-node' &&
-        currentNode.type !== 'END') {
-      logger.warn(`Nodo ${currentNodeId} (${currentNode.type}) no tiene conexiones salientes y no es un nodo final`);
-    }
-
-    // Verificar si el nodo actual ya está en el mapa (puede haber sido añadido por otro nodo)
-    if (!nodeMap[currentNodeId]) {
-      // Si el nodo es de tipo 'start', ya debería estar en el mapa como el flujo base
-      if (currentNode.type === 'startNode' ||
-          currentNode.type === 'start-node' ||
-          currentNode.type === 'START') {
-        if (!nodeMap[currentNodeId]) {
-          logger.warn(`Nodo de inicio ${currentNodeId} no encontrado en el mapa, esto no debería suceder`);
-        }
-      } else {
-        // Para otros tipos de nodos, verificamos si tienen un nodo padre
-        const incomingEdges = reactFlowData.edges.filter(edge => edge.target === currentNodeId);
-
-        if (incomingEdges.length > 0) {
-          // Tomamos el primer nodo padre (la mayoría de nodos tienen un solo padre)
-          const parentEdge = incomingEdges[0];
-          const parentNodeId = parentEdge.source;
-
-          // Verificamos si el nodo padre ya está procesado
-          if (!nodeMap[parentNodeId]) {
-            // Si el padre no está procesado, lo procesamos primero
-            logger.debug(`Procesando primero el nodo padre ${parentNodeId} para ${currentNodeId}`);
-            buildFlowFromNode(parentNodeId, reactFlowData, nodeMap, processedNodes);
-          }
-
-          // Ahora que el padre está procesado (o debería estarlo), podemos procesar este nodo
-          if (nodeMap[parentNodeId]) {
-            // Procesamos este nodo
-            handleNodeByType(currentNode, parentEdge, reactFlowData, nodeMap);
-          } else {
-            logger.error(`Nodo padre ${parentNodeId} sigue sin estar en el mapa, no se puede procesar ${currentNodeId}`);
-          }
-        } else {
-          logger.warn(`Nodo ${currentNodeId} no tiene conexiones entrantes y no es un nodo de inicio`);
-        }
-      }
-    }
-
-    // Ahora que este nodo está (o debería estar) procesado, procesamos sus conexiones salientes
-    for (const edge of outgoingEdges) {
-      const targetNodeId = edge.target;
-      const targetNode = reactFlowData.nodes.find(node => node.id === targetNodeId);
-
-      if (!targetNode) {
-        logger.error(`Nodo destino ${targetNodeId} no encontrado en el flujo`);
-        continue;
-      }
-
-      // Verificamos si el nodo destino ya está en el mapa
-      if (!nodeMap[targetNodeId]) {
-        // Procesamos el nodo destino según su tipo
-        handleNodeByType(targetNode, edge, reactFlowData, nodeMap);
-      }
-
-      // Continuamos con el recorrido recursivo
-      buildFlowFromNode(targetNodeId, reactFlowData, nodeMap, processedNodes);
-    }
-
-    return true;
-  } catch (error) {
-    logger.error(`Error al construir flujo desde nodo ${currentNodeId}:`, error);
-    return false;
+function buildFlowChain(
+  nodeId: string,
+  flowChain: any,
+  nodes: Record<string, any>,
+  edges: ReactFlowEdge[],
+  processedNodes: Set<string>
+): any {
+  if (processedNodes.has(nodeId)) {
+    logger.info(`Nodo ${nodeId} ya procesado, saltando`);
+    return flowChain;
   }
-};
-
-/**
- * Procesa un nodo según su tipo específico
- * 
- * @param node Nodo a procesar
- * @param incomingEdge Conexión entrante a este nodo
- * @param reactFlowData Datos del flujo completo
- * @param nodeMap Mapa de nodos convertidos
- */
-const handleNodeByType = (
-  node: any,
-  incomingEdge: any,
-  reactFlowData: ReactFlowData,
-  nodeMap: NodeMap
-): void => {
-  const parentNodeId = incomingEdge.source;
-  const parentNode = nodeMap[parentNodeId];
   
-  if (!parentNode) {
-    logger.error(`Nodo padre ${parentNodeId} no encontrado en el mapa, no se puede procesar ${node.id}`);
-    return;
+  const currentNode = nodes[nodeId];
+  if (!currentNode) {
+    logger.warn(`Nodo ${nodeId} no encontrado`);
+    return flowChain;
   }
-
-  // Extraemos la información del nodo
-  const nodeId = node.id;
-  const nodeType = node.type;
-  const nodeData = node.data || {};
-  const nodeLabel = nodeData.label || '';
   
-  // Extraemos el contenido del mensaje de las posibles ubicaciones
-  let messageContent = '';
-  if (nodeData.message) {
-    messageContent = nodeData.message;
-  } else if (nodeData.content) {
-    messageContent = nodeData.content;
-  } else if (nodeData.text) {
-    messageContent = nodeData.text;
-  } else if (nodeData.prompt) {
-    messageContent = nodeData.prompt;
-  } else if (nodeData.question) {
-    messageContent = nodeData.question;
-  } else if (nodeData.greeting) {
-    messageContent = nodeData.greeting;
-  }
-
-  // Manejamos el nodo según su tipo
-  switch (nodeType) {
+  processedNodes.add(nodeId);
+  logger.info(`Procesando nodo ${nodeId} de tipo ${currentNode.type}`);
+  
+  // Si este nodo es el destino de un botón, necesitamos procesarlo diferente
+  const isButtonTarget = edges.some(edge => 
+    edge.target === nodeId && edge.sourceHandle && edge.sourceHandle.startsWith('handle-')
+  );
+  
+  // Procesar según el tipo de nodo
+  switch (currentNode.type) {
     case 'messageNode':
+    case 'message-node':
     case 'message':
-      // Nodo de mensaje simple
-      handleMessageNode(nodeId, messageContent, nodeData, parentNode, reactFlowData, nodeMap);
+      const messageContent = currentNode.content || 
+                           currentNode.metadata?.message || 
+                           currentNode.data?.message || 
+                           'Mensaje sin contenido';
+      logger.info(`Agregando mensaje: ${messageContent}`);
+      flowChain = flowChain.addAnswer(messageContent);
       break;
       
     case 'inputNode':
+    case 'input-node':
     case 'input':
-      // Nodo de entrada de usuario
-      handleInputNode(nodeId, messageContent, nodeData, parentNode, reactFlowData, nodeMap);
+      const prompt = currentNode.metadata?.question || 
+                    currentNode.data?.question || 
+                    currentNode.content || 
+                    '¿Cuál es tu respuesta?';
+      const variableName = currentNode.metadata?.variableName || 
+                          currentNode.data?.variableName || 
+                          'userInput';
+      
+      logger.info(`Agregando input: ${prompt} -> ${variableName}`);
+      flowChain = flowChain.addAnswer(prompt, { capture: true }, async (ctx: any, { state }: any) => {
+        // Asegurar que tenantId y sessionId se mantengan en el estado
+        const metadata = ctx?._metadata || {};
+        await state.update({ 
+          [variableName]: ctx.body,
+          tenantId: state.tenantId || metadata.tenantId,
+          sessionId: state.sessionId || metadata.sessionId
+        });
+        logger.info(`Variable ${variableName} actualizada con: ${ctx.body}`);
+      });
       break;
       
-    case 'conditionalNode':
+    case 'buttonsNode':
+    case 'buttons-node':
+    case 'buttons':
+      const text = currentNode.metadata?.message || 
+                  currentNode.data?.message || 
+                  currentNode.content || 
+                  '¿Qué deseas hacer?';
+      const buttons = currentNode.metadata?.buttons || 
+                     currentNode.data?.buttons || 
+                     [];
+      
+      logger.info(`Agregando botones: ${text} con ${buttons.length} opciones`);
+      
+      // Verificar si debe esperar respuesta (por defecto sí)
+      const waitForResponse = currentNode.metadata?.waitForResponse !== false && 
+                             currentNode.data?.waitForResponse !== false;
+      
+      if (buttons.length > 0) {
+        // Generar keywords únicos para cada botón y agregarlos a los metadatos
+        const buttonsFormatted = buttons.map((btn: any, index: number) => {
+          return { 
+            body: btn.text || btn.label || btn.body
+          };
+        });
+        
+        const answerOptions: any = { 
+          buttons: buttonsFormatted
+        };
+        
+        // Solo agregar capture si waitForResponse es true
+        if (waitForResponse) {
+          answerOptions.capture = true;
+          flowChain = flowChain.addAnswer(text, answerOptions);
+        } else {
+          // Si no espera respuesta, solo mostrar los botones
+          flowChain = flowChain.addAnswer(text, answerOptions);
+        }
+      }
+      
+      // NO continuar el flujo secuencial, los botones manejarán sus propios flujos
+      return flowChain;
+      
     case 'conditionNode':
+    case 'condition-node':
     case 'condition':
-      // Nodo condicional
-      handleConditionalNode(nodeId, messageContent, nodeData, parentNode, incomingEdge, reactFlowData, nodeMap);
-      break;
-      
-    case 'aiNode':
-    case 'ai':
-      // Nodo de IA
-      handleAINode(nodeId, messageContent, nodeData, parentNode, reactFlowData, nodeMap);
+      logger.info(`Procesando condición - continuando con flujo por defecto`);
+      // Para condiciones, simplemente continuar con el flujo por defecto
       break;
       
     case 'endNode':
+    case 'end-node':
     case 'end':
-      // Nodo final - no hace falta procesarlo
+      // Nodo final, no necesita procesamiento adicional
+      logger.info(`Nodo final alcanzado: ${nodeId}`);
+      return flowChain;
+      
+    default:
+      logger.warn(`Tipo de nodo no reconocido: ${currentNode.type}`);
+  }
+  
+  // Buscar el siguiente nodo y continuar la cadena
+  const nextNodeId = getNextNodeId(currentNode, edges, nodes);
+  if (nextNodeId) {
+    return buildFlowChain(nextNodeId, flowChain, nodes, edges, processedNodes);
+  }
+  
+  return flowChain;
+}
+
+/**
+ * Obtiene el ID del siguiente nodo
+ */
+function getNextNodeId(
+  node: any, 
+  edges: ReactFlowEdge[], 
+  nodes: Record<string, any>
+): string | undefined {
+  // Primero, buscar en la propiedad 'next' del nodo (formato API)
+  if (node.next) {
+    if (typeof node.next === 'string') {
+      logger.info(`Siguiente nodo desde propiedad next: ${node.next}`);
+      return node.next;
+    } else if (Array.isArray(node.next) && node.next.length > 0) {
+      // Si es un array (como en buttonsNode), tomar el primero o el default
+      const defaultNext = node.next.find(n => n.condition?.value === 'default');
+      if (defaultNext) {
+        logger.info(`Siguiente nodo desde array next (default): ${defaultNext.nextNodeId}`);
+        return defaultNext.nextNodeId;
+      }
+      // Si no hay default, tomar el primero
+      const firstNext = node.next[0].nextNodeId || node.next[0];
+      logger.info(`Siguiente nodo desde array next (primero): ${firstNext}`);
+      return firstNext;
+    }
+  }
+  
+  // Si no hay 'next', buscar en edges (formato ReactFlow)
+  if (edges && edges.length > 0) {
+    // Buscar edge que sale de este nodo
+    const outgoingEdge = edges.find(edge => edge.source === node.id);
+    if (outgoingEdge) {
+      logger.info(`Siguiente nodo desde edges: ${outgoingEdge.target}`);
+      return outgoingEdge.target;
+    }
+    
+    // Si el nodo es un botón, puede tener múltiples salidas con sourceHandle
+    if (node.type === 'buttonsNode' || node.type === 'buttons-node') {
+      // Buscar el handle por defecto (generalmente handle-0)
+      const defaultEdge = edges.find(edge => 
+        edge.source === node.id && 
+        (edge.sourceHandle === 'handle-0' || !edge.sourceHandle)
+      );
+      if (defaultEdge) {
+        logger.info(`Siguiente nodo desde botón con handle: ${defaultEdge.target}`);
+        return defaultEdge.target;
+      }
+    }
+  }
+  
+  logger.info(`No se encontró siguiente nodo para ${node.id}`);
+  return undefined;
+}
+
+/**
+ * Procesa un nodo directamente sin crear un flujo
+ */
+async function processNodeDirectly(
+  node: any,
+  ctx: any,
+  helpers: { state: any; flowDynamic: any; provider?: any },
+  sessionKey?: string
+): Promise<void> {
+  logger.info(`Procesando nodo directamente: ${node.id} de tipo ${node.type}`);
+  
+  const { state, flowDynamic, provider } = helpers;
+  
+  // Obtener contexto de sesión del almacén global
+  const sessionContext = getSessionContext(ctx.from) || {};
+  const tenantId = sessionContext.tenantId || 'default';
+  const sessionId = sessionContext.sessionId || 'default';
+  
+  const currentSessionKey = sessionKey || `${tenantId}:${ctx.from}:${sessionId}`;
+  logger.info(`[processNodeDirectly] Usando sessionKey: ${currentSessionKey} - tenantId: ${tenantId}, sessionId: ${sessionId}`);
+  
+  // Para debugging
+  logger.info(`[processNodeDirectly] Contexto disponible:`, {
+    state_tenantId: state?.tenantId,
+    state_sessionId: state?.sessionId,
+    ctx_metadata: ctx?._metadata,
+    provider_tenantId: helpers.provider?.tenantId,
+    ctx_sessionId: ctx?._sessionId
+  });
+  
+  switch (node.type) {
+    case 'messageNode':
+    case 'message-node':
+    case 'message':
+      const messageContent = node.content || 
+                           node.metadata?.message || 
+                           node.data?.message || 
+                           'Mensaje sin contenido';
+      logger.info(`[processNodeDirectly] Enviando mensaje: "${messageContent}"`);
+      
+      // Encolar el mensaje
+      enqueueMessage(currentSessionKey, { body: messageContent });
+      
+      // Usar un objeto simple con body para asegurar que se capture correctamente
+      await flowDynamic({ body: messageContent });
+      break;
+      
+    case 'inputNode':
+    case 'input-node':
+    case 'input':
+      const prompt = node.metadata?.question || 
+                    node.data?.question || 
+                    node.content || 
+                    '¿Cuál es tu respuesta?';
+      const variableName = node.metadata?.variableName || 
+                          node.data?.variableName || 
+                          'userInput';
+      
+      await state.update({ waitingFor: variableName });
+      await flowDynamic(prompt);
+      break;
+      
+    case 'buttonsNode':
+    case 'buttons-node':
+    case 'buttons':
+      const buttonMessage = node.content || 
+                           node.metadata?.message || 
+                           node.data?.message || 
+                           'Selecciona una opción:';
+      const buttons = node.metadata?.buttons || 
+                     node.data?.buttons || 
+                     [];
+      
+      logger.info(`Procesando nodo de botones con ${buttons.length} opciones`);
+      logger.info(`Mensaje de botones: "${buttonMessage}"`);
+      logger.info(`Botones:`, JSON.stringify(buttons));
+      
+      if (buttons.length > 0) {
+        // Formatear los botones correctamente
+        const buttonsFormatted = buttons.map((btn: any) => ({ 
+          body: btn.text || btn.label || btn.body
+        }));
+        
+        // Enviar el mensaje y los botones juntos
+        logger.info(`Enviando mensaje con botones vía flowDynamic`);
+        const messageWithButtons = {
+          body: buttonMessage,
+          buttons: buttonsFormatted
+        };
+        logger.info(`Objeto completo a enviar:`, JSON.stringify(messageWithButtons));
+        
+        // Encolar el mensaje con botones
+        enqueueMessage(currentSessionKey, messageWithButtons);
+        
+        await flowDynamic(messageWithButtons);
+      } else {
+        await flowDynamic(buttonMessage);
+      }
+      break;
+      
+    case 'endNode':
+    case 'end-node':
+    case 'end':
+      // Nodo final, no hacer nada
       break;
       
     default:
-      logger.warn(`Tipo de nodo no soportado directamente: ${nodeType}`);
-      // Intentamos un tratamiento genérico como nodo de mensaje
-      handleMessageNode(nodeId, messageContent || `[${nodeType}] ${nodeLabel}`, nodeData, parentNode, reactFlowData, nodeMap);
+      logger.warn(`Tipo de nodo no reconocido para procesamiento directo: ${node.type}`);
   }
-};
+}
 
-/**
- * Procesa un nodo de mensaje
- */
-const handleMessageNode = (
-  nodeId: string,
-  message: string,
-  nodeData: any,
-  parentNode: any,
-  reactFlowData: ReactFlowData,
-  nodeMap: NodeMap
-): void => {
-  try {
-    // Verificar que tenemos un mensaje válido
-    if (!message || message.trim() === '') {
-      message = nodeData.label || `Mensaje del nodo ${nodeId}`;
-      logger.warn(`Nodo de mensaje ${nodeId} sin contenido, usando valor por defecto: "${message}"`);
-    }
-
-    // Creamos el nodo de respuesta con el mensaje
-    const delay = nodeData.delay || 0;
-    const options = delay > 0 ? { delay: delay * 1000 } : undefined;
-
-    // Verificamos si hay multimedia
-    let mediaOptions = undefined;
-    if (nodeData.media || nodeData.imageUrl || nodeData.audioUrl || nodeData.videoUrl) {
-      mediaOptions = {
-        media: nodeData.media || nodeData.imageUrl || nodeData.audioUrl || nodeData.videoUrl
-      };
-    }
-
-    // Mezclamos todas las opciones
-    const finalOptions = { ...options, ...mediaOptions };
-
-    // Verificar que el nodo padre es válido antes de añadir la respuesta
-    if (!parentNode || typeof parentNode.addAnswer !== 'function') {
-      logger.error(`Nodo padre inválido para ${nodeId}, no se puede añadir respuesta`);
-      return;
-    }
-
-    // Añadimos la respuesta al nodo padre
-    let messageNode;
-    try {
-      if (Object.keys(finalOptions).length > 0) {
-        messageNode = parentNode.addAnswer(message, finalOptions);
-      } else {
-        messageNode = parentNode.addAnswer(message);
-      }
-    } catch (addError) {
-      logger.error(`Error al añadir respuesta a nodo ${nodeId}: ${addError}`);
-      return;
-    }
-
-    // Guardamos el nodo en el mapa
-    nodeMap[nodeId] = messageNode;
-
-    logger.debug(`Nodo de mensaje ${nodeId} procesado correctamente y guardado en el mapa`);
-  } catch (error) {
-    logger.error(`Error al procesar nodo de mensaje ${nodeId}:`, error);
-  }
-};
-
-/**
- * Procesa un nodo de entrada (input)
- */
-const handleInputNode = (
-  nodeId: string,
-  question: string,
-  nodeData: any,
-  parentNode: any,
-  reactFlowData: ReactFlowData,
-  nodeMap: NodeMap
-): void => {
-  try {
-    // Verificar que tenemos una pregunta válida
-    if (!question || question.trim() === '') {
-      question = nodeData.label || nodeData.title || `Ingrese su respuesta (${nodeId})`;
-      logger.warn(`Nodo de entrada ${nodeId} sin pregunta, usando: "${question}"`);
-    }
-
-    // Verificar que el nodo padre es válido
-    if (!parentNode || (typeof parentNode.addAnswer !== 'function' && typeof parentNode.addAction !== 'function')) {
-      logger.error(`Nodo padre inválido para ${nodeId}, no se puede procesar nodo de entrada`);
-      return;
-    }
-
-    // Obtenemos el nombre de la variable donde guardar la respuesta
-    // Extraer del ID cualquier nombre explícito (ej: inputNode-nombre -> nombre)
-    let variableName;
-    if (nodeId.includes('-')) {
-      const parts = nodeId.split('-');
-      if (parts.length >= 2 && parts[0].toLowerCase().includes('input')) {
-        variableName = parts[1];
-      } else {
-        variableName = `var_${nodeId.replace(/[-]/g, '_')}`;
-      }
-    } else {
-      variableName = nodeData.variableName || `var_${nodeId.replace(/[-]/g, '_')}`;
-    }
-
-    logger.debug(`Procesando nodo de entrada ${nodeId}, guardará en variable: ${variableName}`);
-
-    // Primero enviamos la pregunta usando addAction
-    let questionNode;
-    try {
-      // Primero enviamos la pregunta
-      questionNode = parentNode.addAction(async (ctx, { flowDynamic }) => {
-        await flowDynamic(question);
-      });
-
-      // Luego capturamos la respuesta con addAction y capture: true
-      const inputNode = questionNode.addAction({ capture: true }, async (ctx, { flowDynamic, state }) => {
-        try {
-          // Guardamos la respuesta en el estado
-          const userResponse = ctx.body;
-          const stateUpdate: Record<string, any> = {
-            [`${variableName}`]: userResponse,
-            last_node_id: nodeId
-          };
-
-          await state.update(stateUpdate);
-          logger.debug(`Respuesta de usuario guardada en variable ${variableName}: "${userResponse}"`);
-
-          // Procesamos los nodos conectados a este
-          const outgoingEdges = reactFlowData.edges.filter(edge => edge.source === nodeId);
-
-          if (outgoingEdges.length > 0) {
-            const nextNodeId = outgoingEdges[0].target;
-            const nextNode = reactFlowData.nodes.find(node => node.id === nextNodeId);
-
-            if (nextNode) {
-              // Extraemos el contenido del siguiente nodo
-              let nextContent = extractNodeContent(nextNode);
-
-              // Si no hay contenido explícito pero hay una etiqueta, la usamos
-              if (!nextContent && nextNode.data?.label) {
-                nextContent = nextNode.data.label;
-              }
-
-              // Reemplazamos variables en el texto si hay contenido
-              if (nextContent) {
-                const currentState = await state.get();
-                const processedContent = replaceStateVariables(nextContent, currentState);
-
-                // Enviamos el contenido procesado
-                await flowDynamic(processedContent);
-                logger.debug(`Enviado mensaje de siguiente nodo ${nextNodeId} después de entrada`);
-              }
-            }
-          }
-        } catch (handlerError) {
-          logger.error(`Error en handler de nodo input ${nodeId}:`, handlerError);
-        }
-      });
-
-      // Guardamos el nodo en el mapa
-      nodeMap[nodeId] = inputNode;
-      logger.debug(`Nodo de entrada ${nodeId} procesado y guardado en el mapa`);
-    } catch (addError) {
-      logger.error(`Error al añadir nodo de entrada ${nodeId}: ${addError}`);
-      return;
-    }
-  } catch (error) {
-    logger.error(`Error al procesar nodo de input ${nodeId}:`, error);
-  }
-};
-
-/**
- * Procesa un nodo condicional
- */
-const handleConditionalNode = (
-  nodeId: string,
-  content: string,
-  nodeData: any,
-  parentNode: any,
-  incomingEdge: any,
-  reactFlowData: ReactFlowData,
-  nodeMap: NodeMap
-): void => {
-  try {
-    // Extraemos la condición
-    const condition = nodeData.condition || '';
-    const equals = nodeData.equals || '';
-    const caseSensitive = nodeData.caseSensitive === true;
-    
-    // Buscamos las conexiones para los casos true y false
-    const edges = reactFlowData.edges.filter(edge => edge.source === nodeId);
-    
-    // Identificamos qué borde corresponde a cada caso
-    let trueEdge, falseEdge;
-    
-    for (const edge of edges) {
-      if (edge.sourceHandle === 'true' || edge.label === 'true' || edge.label === 'Yes' || edge.label === 'Sí') {
-        trueEdge = edge;
-      } else if (edge.sourceHandle === 'false' || edge.label === 'false' || edge.label === 'No') {
-        falseEdge = edge;
-      }
-    }
-    
-    // Si no pudimos identificar por handle o label, usamos el primero como true y el segundo como false
-    if (!trueEdge && !falseEdge && edges.length >= 2) {
-      trueEdge = edges[0];
-      falseEdge = edges[1];
-    } else if (!trueEdge && edges.length >= 1) {
-      trueEdge = edges[0];
-    } else if (!falseEdge && edges.length >= 2) {
-      falseEdge = edges[1];
-    }
-    
-    // Creamos un nodo que pueda manejar la condición
-    const condNode = parentNode.addAction(async (ctx, { flowDynamic, state }) => {
-      try {
-        // Obtenemos el estado actual
-        const currentState = await state.get();
-        
-        // Evaluamos la condición
-        let conditionMet = false;
-        
-        // Si hay una variable específica que evaluar
-        if (condition) {
-          const variableValue = currentState[condition] || '';
-          
-          if (equals) {
-            // Comparación exacta
-            if (caseSensitive) {
-              conditionMet = variableValue === equals;
-            } else {
-              conditionMet = variableValue.toLowerCase() === equals.toLowerCase();
-            }
-          } else {
-            // Si hay valor en la variable, consideramos true
-            conditionMet = !!variableValue;
-          }
-        } else {
-          // Si no hay condición específica, usamos la última respuesta del usuario
-          const lastResponse = ctx.body.toLowerCase();
-          
-          // Verificamos si es afirmativo
-          conditionMet = lastResponse.includes('sí') || 
-                         lastResponse.includes('si') || 
-                         lastResponse === 'si' || 
-                         lastResponse === 'sí' ||
-                         lastResponse === 'yes' ||
-                         lastResponse === 'claro' ||
-                         lastResponse === 'por supuesto';
-        }
-        
-        // Según el resultado, seguimos una ruta u otra
-        if (conditionMet) {
-          // Ruta true
-          if (trueEdge) {
-            const trueNodeId = trueEdge.target;
-            const trueNode = reactFlowData.nodes.find(node => node.id === trueNodeId);
-            
-            if (trueNode) {
-              // Extraemos y enviamos el contenido del nodo true
-              const trueContent = extractNodeContent(trueNode);
-              
-              if (trueContent) {
-                // Procesamos variables en el contenido
-                const processedContent = replaceStateVariables(trueContent, currentState);
-                await flowDynamic(processedContent);
-              }
-            }
-          }
-        } else {
-          // Ruta false
-          if (falseEdge) {
-            const falseNodeId = falseEdge.target;
-            const falseNode = reactFlowData.nodes.find(node => node.id === falseNodeId);
-            
-            if (falseNode) {
-              // Extraemos y enviamos el contenido del nodo false
-              const falseContent = extractNodeContent(falseNode);
-              
-              if (falseContent) {
-                // Procesamos variables en el contenido
-                const processedContent = replaceStateVariables(falseContent, currentState);
-                await flowDynamic(processedContent);
-              }
-            }
-          }
-        }
-        
-        // Actualizamos el estado con la decisión tomada
-        await state.update({
-          [`condition_${nodeId}`]: conditionMet,
-          last_node_id: nodeId
-        });
-      } catch (handlerError) {
-        logger.error(`Error en handler de nodo condicional ${nodeId}:`, handlerError);
-      }
-    });
-    
-    // Guardamos el nodo en el mapa
-    nodeMap[nodeId] = condNode;
-  } catch (error) {
-    logger.error(`Error al procesar nodo condicional ${nodeId}:`, error);
-  }
-};
-
-/**
- * Procesa un nodo de IA
- */
-const handleAINode = (
-  nodeId: string,
-  prompt: string,
-  nodeData: any,
-  parentNode: any,
-  reactFlowData: ReactFlowData,
-  nodeMap: NodeMap
-): void => {
-  try {
-    // Extraemos los parámetros del nodo de IA
-    const model = nodeData.model || 'gpt-3.5-turbo';
-    const temperature = nodeData.temperature || 0.7;
-    const maxTokens = nodeData.maxTokens || 500;
-    const variableName = nodeData.variableName || nodeData.responseVariableName || `ai_response_${nodeId}`;
-    
-    // Importamos dinámicamente el servicio de IA (para evitar ciclos de dependencia)
-    const aiNode = parentNode.addAction(async (ctx, { flowDynamic, state }) => {
-      try {
-        // Obtenemos el estado actual
-        const currentState = await state.get();
-        
-        // Procesamos el prompt reemplazando variables
-        const processedPrompt = replaceStateVariables(prompt, currentState);
-        
-        // Llamamos al servicio de IA
-        const { generateResponse } = await import('../services/aiServices');
-        
-        const aiResponse = await generateResponse(
-          processedPrompt,
-          {
-            model,
-            temperature,
-            maxTokens,
-            userId: ctx.from,
-            tenantId: currentState.tenant_id || 'default',
-            sessionId: currentState.session_id || `session-${ctx.from}-${Date.now()}`
-          }
-        );
-        
-        // Guardamos la respuesta en el estado
-        await state.update({
-          [variableName]: aiResponse,
-          last_node_id: nodeId
-        });
-        
-        // Enviamos la respuesta
-        await flowDynamic(aiResponse);
-        
-        // Procesamos los nodos conectados a este
-        const outgoingEdges = reactFlowData.edges.filter(edge => edge.source === nodeId);
-        
-        if (outgoingEdges.length > 0) {
-          const nextNodeId = outgoingEdges[0].target;
-          const nextNode = reactFlowData.nodes.find(node => node.id === nextNodeId);
-          
-          if (nextNode) {
-            const nextContent = extractNodeContent(nextNode);
-            
-            if (nextContent) {
-              // Actualizamos el estado para incluir la nueva respuesta de IA
-              const updatedState = await state.get();
-              
-              // Procesamos variables en el contenido
-              const processedContent = replaceStateVariables(nextContent, updatedState);
-              
-              // Pequeña pausa para separar mensajes
-              setTimeout(async () => {
-                await flowDynamic(processedContent);
-              }, 1000);
-            }
-          }
-        }
-      } catch (handlerError) {
-        logger.error(`Error en handler de nodo AI ${nodeId}:`, handlerError);
-        await flowDynamic("Lo siento, no pude generar una respuesta en este momento. ¿Puedes intentar nuevamente?");
-      }
-    });
-    
-    // Guardamos el nodo en el mapa
-    nodeMap[nodeId] = aiNode;
-  } catch (error) {
-    logger.error(`Error al procesar nodo de IA ${nodeId}:`, error);
-  }
-};
-
-/**
- * Extrae el contenido de un nodo
- */
-const extractNodeContent = (node: any): string => {
-  if (!node || !node.data) return '';
-  
-  return node.data.message || 
-         node.data.content || 
-         node.data.text || 
-         node.data.prompt || 
-         node.data.question || 
-         node.data.greeting || 
-         '';
-};
-
-/**
- * Reemplaza variables en un texto
- */
-const replaceStateVariables = (text: string, state: Record<string, any>): string => {
-  if (!text) return '';
-  
-  let processedText = text;
-  
-  // Reemplazamos todas las variables en formato {{variable}}
-  const variableRegex = /\{\{([^}]+)\}\}/g;
-  let match;
-  
-  while ((match = variableRegex.exec(text)) !== null) {
-    const varName = match[1].trim();
-    if (state[varName] !== undefined) {
-      processedText = processedText.replace(
-        match[0],
-        String(state[varName])
-      );
-    }
-  }
-  
-  return processedText;
-};
+// Exportar función de conversión
+export default convertTemplateToBuilderbotFlow;

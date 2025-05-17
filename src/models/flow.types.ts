@@ -23,6 +23,10 @@ export enum NodeType {
   ENTITY = 'entity',       // Extracción de entidad
   FALLBACK = 'fallback',   // Respuesta de respaldo
   
+  // Nodos de interactividad
+  BUTTONS = 'buttons',     // Botones de selección
+  LIST = 'list',           // Lista de opciones
+  
   // Nodos específicos para Voice Chat
   VOICE_RESPONSE = 'voice_response', // Respuesta de voz
   SPEECH_TO_TEXT = 'speech_to_text', // Conversión de voz a texto
@@ -37,6 +41,8 @@ export enum NodeType {
   AI_NODE = 'aiNode',      // Nodo de IA
   CONDITION_NODE = 'conditionNode', // Nodo de condición (alternativo)
   INPUT_NODE = 'inputNode', // Nodo de entrada (alternativo)
+  BUTTONS_NODE = 'buttonsNode', // Nodo de botones (alternativo)
+  LIST_NODE = 'listNode',  // Nodo de lista (alternativo)
   TTS_NODE = 'ttsNode',    // Nodo de text-to-speech (alternativo)
   STT_NODE = 'sttNode',    // Nodo de speech-to-text (alternativo)
 }
@@ -176,6 +182,12 @@ export interface ExtendedNodeMetadata {
   delay?: number;
   responseVariableName?: string;
   provider?: string;
+  // Nuevas propiedades para modo auto
+  mode?: "auto" | "static";   // Permite diferenciar entre nodos automáticos y estáticos
+  prompt?: string;            // Contenido para enviar a la API de IA
+  template?: string;          // Plantilla con variables para nodos de mensaje
+  maxTokens?: number;         // Máximo de tokens para respuestas de IA
+  useKnowledgeBase?: boolean; // Indica si se debe incluir la base de conocimiento
 }
 
 /**
@@ -332,6 +344,8 @@ export interface ReactFlowEdge {
   id: string;
   source: string;
   target: string;
+  sourceHandle?: string;
+  targetHandle?: string;
   label?: string;
   type?: string;
   animated?: boolean;

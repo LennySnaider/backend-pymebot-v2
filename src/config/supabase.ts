@@ -13,7 +13,7 @@ import logger from '../utils/logger';
 
 // URL y clave de API de Supabase
 const supabaseUrl = config.supabase?.url || process.env.SUPABASE_URL;
-const supabaseKey = config.supabase?.key || process.env.SUPABASE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseKey = config.supabase?.serviceKey || process.env.SUPABASE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // Verificar que tenemos las credenciales necesarias
 if (!supabaseUrl || !supabaseKey) {

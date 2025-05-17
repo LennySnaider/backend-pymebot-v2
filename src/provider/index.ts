@@ -42,7 +42,7 @@ const baileysConfig = {
     browser: ["BuilderBot", "Chrome", "120.0.0"],
 
     // Logs solo en desarrollo
-    logging: config.NODE_ENV === "development",
+    logging: config.environment === "development",
 
     // Desactivar QR
     qr: true,

@@ -1,348 +1,145 @@
-# Solución de Problemas de Chatbot y Estado de Conversación
+# Solución a Problemas del Chatbot
 
-Este documento describe problemas comunes encontrados en el sistema de chatbot y sus soluciones, especialmente relacionados con la gestión del estado de conversaciones y la compatibilidad con Supabase.
+*Versión 1.0 - Actualizado: 11 de mayo de 2025*
 
-## Tabla de Contenidos
+## Problemas Solucionados
 
-1. [Problemas de Esquema de Base de Datos](#1-problemas-de-esquema-de-base-de-datos)
-2. [Manejo de IDs y UUIDs](#2-manejo-de-ids-y-uuids)
-3. [Carga de Plantillas](#3-carga-de-plantillas)
+### 1. Visualización incorrecta de mensajes múltiples
 
-## 1. Problemas de Esquema de Base de Datos
+**Problema:** El chatbot mostraba "Mensaje procesado" en lugar del mensaje real de confirmación de cita o el mensaje de despedida.
 
-### Columna `session_id` en Tabla `conversation_sessions`
+**Solución implementada:** 
+- Se modificó el manejo de respuestas en el backend para mejorar el formato de mensajes múltiples.
+- Se actualizó `src/services/botFlowIntegration.ts` para manejar correctamente mensajes de tipo múltiple.
+- Se mejoró el procesamiento en `src/api/text.ts` para asegurar que los mensajes se envíen correctamente al frontend.
 
-**Problema**: El código del backend intenta acceder a una columna `session_id` en la tabla `conversation_sessions`, pero esta columna no existía en el esquema original.
+**Detalles técnicos (Backend):**
+El problema principal estaba en cómo el backend manejaba los mensajes de tipo múltiple. Cuando se detectaba una secuencia de mensajes (como confirmación de cita seguida de un mensaje de despedida), el sistema usaba un formato con `is_multi_message` y un array de `messages`, pero el frontend no estaba procesando correctamente este formato.
 
-**Error característico**:
-```
-[ERROR] Error al cargar estado de conversación: column conversation_sessions.session_id does not exist
-```
+Cambios específicos:
+1. Se mejoró el manejo de estado en `flowRegistry.ts` para rastrear correctamente mensajes múltiples
+2. Se implementó mejor manejo de respuestas en `botFlowIntegration.ts`
+3. Se agregaron verificaciones adicionales en `text.ts` para garantizar que los mensajes se envíen correctamente
 
-**Solución aplicada**:
-Se creó un script SQL para añadir la columna faltante:
+**Archivos modificados en el backend:**
+- `src/services/botFlowIntegration.ts`
+- `src/services/flowRegistry.ts`
+- `src/api/text.ts`
 
-```sql
--- Verificar si la columna existe antes de intentar crearla
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_name = 'conversation_sessions'
-        AND column_name = 'session_id'
-    ) THEN
-        -- Añadir la columna session_id
-        ALTER TABLE conversation_sessions 
-        ADD COLUMN session_id TEXT;
-        
-        -- Generar un valor único para cada fila existente
-        UPDATE conversation_sessions 
-        SET session_id = id::text 
-        WHERE session_id IS NULL;
-        
-        -- Hacer la columna NOT NULL después de llenarla
-        ALTER TABLE conversation_sessions 
-        ALTER COLUMN session_id SET NOT NULL;
-        
-        -- Añadir un índice para búsquedas eficientes
-        CREATE INDEX IF NOT EXISTS idx_conversation_sessions_session_id
-        ON conversation_sessions(session_id);
-        
-        -- Añadir una restricción única (tenant_id, session_id)
-        ALTER TABLE conversation_sessions
-        ADD CONSTRAINT unique_tenant_session
-        UNIQUE (tenant_id, session_id);
-    END IF;
-END $$;
-```
+### 2. Procesamiento de nodos con waitForResponse=true
 
-## 2. Manejo de IDs y UUIDs
+**Problema:** Algunos nodos del chatbot que requerían respuesta del usuario (`waitForResponse=true`) no procesaban correctamente el flujo después de recibir la respuesta.
 
-### Problema con IDs No-UUID en Campos UUID
+**Solución implementada:**
+- Se corrigió el procesamiento de nodos para mantener el estado de espera correctamente.
+- Se implementó una mejor gestión del estado `waitingForInput` y `waitingNodeId`.
+- Se mejoró la detección y almacenamiento de respuestas del usuario.
 
-**Problema**: El código a veces enviaba el string "default" como valor para campos que esperaban UUIDs válidos, causando errores de sintaxis SQL.
+### 3. Auto-flow entre nodos
 
-**Error característico**:
-```
-[ERROR] Error al cargar estado de conversación: invalid input syntax for type uuid: "default"
-```
+**Problema:** El chatbot no avanzaba automáticamente entre nodos cuando no se requería respuesta del usuario.
 
-**Solución aplicada**:
-Se creó una función de validación de UUID que maneja automáticamente valores no-UUID como "default":
+**Solución implementada:**
+- Se desarrolló un sistema de auto-flow que permite avanzar automáticamente entre nodos.
+- Se agregó soporte para detectar nodos de despedida y manejarlos adecuadamente.
+- Se implementó una estrategia para enviar mensajes separados cuando es necesario.
 
-```sql
--- Función para convertir a UUID válido
-CREATE OR REPLACE FUNCTION get_valid_tenant_uuid(tenant_input TEXT)
-RETURNS UUID AS $$
-BEGIN
-    -- Si el input es 'default' o NULL, devolver el UUID por defecto
-    IF tenant_input IS NULL OR tenant_input = 'default' OR tenant_input = '' THEN
-        RETURN '00000000-0000-0000-0000-000000000000'::UUID;
-    END IF;
-    
-    -- Intentar convertir a UUID, en caso de error devolver el UUID por defecto
-    BEGIN
-        RETURN tenant_input::UUID;
-    EXCEPTION WHEN OTHERS THEN
-        RAISE WARNING 'Invalid UUID: %, using default UUID', tenant_input;
-        RETURN '00000000-0000-0000-0000-000000000000'::UUID;
-    END;
-END;
-$$ LANGUAGE plpgsql;
+## Problemas Pendientes
 
--- Trigger para validación automática
-CREATE OR REPLACE FUNCTION validate_tenant_id()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.tenant_id = get_valid_tenant_uuid(NEW.tenant_id::TEXT);
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+### 1. Comportamiento de reinicio al final de conversación
 
-CREATE TRIGGER validate_tenant_id_trigger
-BEFORE INSERT OR UPDATE ON conversation_sessions
-FOR EACH ROW
-EXECUTE FUNCTION validate_tenant_id();
-```
+**Problema:** En algunos casos, al finalizar completamente un flujo conversacional, el chatbot reinicia desde el principio en lugar de mantener el contexto.
 
-### Funciones RPC para Manejo Seguro de Datos
+**Estado:** Pendiente de solución en Fase 3
 
-Para mejorar la seguridad y el manejo de IDs, se crearon funciones RPC que encapsulan la lógica de acceso a datos:
+### 2. Problemas con persistencia de estado al cambiar entre nodos
 
-```sql
--- Cargar estado de conversación
-CREATE OR REPLACE FUNCTION load_conversation_state(
-    p_tenant_id TEXT,
-    p_session_id TEXT
-) 
-RETURNS JSONB AS $$
-DECLARE
-    v_state JSONB;
-BEGIN
-    SELECT state_data INTO v_state
-    FROM conversation_sessions
-    WHERE tenant_id = get_valid_tenant_uuid(p_tenant_id)
-      AND session_id = p_session_id
-    LIMIT 1;
-    
-    RETURN v_state;
-END;
-$$ LANGUAGE plpgsql;
+**Problema:** Ocasionalmente, al cambiar entre ciertos tipos de nodos, se puede perder parte del estado o variables del contexto.
 
--- Guardar estado de conversación
-CREATE OR REPLACE FUNCTION save_conversation_state(
-    p_tenant_id TEXT,
-    p_session_id TEXT,
-    p_state_data JSONB
-)
-RETURNS BOOLEAN AS $$
-DECLARE
-    v_valid_tenant_id UUID;
-    v_record_exists BOOLEAN;
-BEGIN
-    -- Convertir tenant_id a UUID válido
-    v_valid_tenant_id := get_valid_tenant_uuid(p_tenant_id);
-    
-    -- Verificar si ya existe el registro
-    SELECT EXISTS (
-        SELECT 1 
-        FROM conversation_sessions 
-        WHERE tenant_id = v_valid_tenant_id
-          AND session_id = p_session_id
-    ) INTO v_record_exists;
-    
-    -- Insertar o actualizar según corresponda
-    IF v_record_exists THEN
-        UPDATE conversation_sessions
-        SET state_data = p_state_data
-        WHERE tenant_id = v_valid_tenant_id
-          AND session_id = p_session_id;
-    ELSE
-        INSERT INTO conversation_sessions (
-            tenant_id, session_id, state_data
-        ) VALUES (
-            v_valid_tenant_id, p_session_id, p_state_data
-        );
-    END IF;
-    
-    RETURN TRUE;
-EXCEPTION WHEN OTHERS THEN
-    RAISE WARNING 'Error saving conversation state: %', SQLERRM;
-    RETURN FALSE;
-END;
-$$ LANGUAGE plpgsql;
-```
+**Estado:** Parcialmente resuelto, pendiente de optimización en Fase 3
 
-## 3. Carga de Plantillas
+## Mejores Prácticas Implementadas
 
-**Problema**: Después de solucionar los problemas de base de datos, el sistema todavía muestra el mensaje:
-```
-[WARN] Flujo "[ID]" no encontrado en el registro
-```
-
-**Causa**: Este error ocurre porque aunque la base de datos puede guardar y cargar estados correctamente, el sistema no puede encontrar la plantilla del flujo para procesar el mensaje.
-
-**Solución implementada**:
-Hemos implementado un mecanismo de carga dinámica de plantillas que:
-1. No carga todas las plantillas al inicio (evitando uso excesivo de memoria)
-2. Carga cada plantilla bajo demanda, cuando un tenant la necesita
-3. Mantiene en memoria sólo las plantillas que se están usando activamente
-
-**Implementación**:
-Se ha creado una nueva función `loadFlowForTenant()` en `src/services/flowRegistry.ts` que carga dinámicamente una plantilla cuando se necesita:
+### 1. Manejo de Respuestas Múltiples en el Backend
 
 ```typescript
-/**
- * Carga un flujo específico para un tenant
- * Se llama justo antes de procesar un mensaje
- *
- * @param flowId ID del flujo a cargar (templateId)
- * @param tenantId ID del tenant
- * @returns true si se cargó correctamente
- */
-export const loadFlowForTenant = async (
-  flowId: string,
-  tenantId: string
-): Promise<boolean> => {
-  try {
-    // Si el flujo ya está cargado, retornamos true
-    if (flowRegistry[flowId] || templateFlowRegistry[flowId]) {
-      logger.debug(`Flujo ${flowId} ya está cargado en el registro`);
-      return true;
-    }
-
-    logger.info(`Cargando flujo ${flowId} para tenant ${tenantId}`);
-
-    // Primero intentamos con flujos predefinidos
-    if (flowId === 'lead-capture' || flowId === 'flujo-basico-lead') {
-      try {
-        const flow = await leadCaptureFlow();
-        if (flow) {
-          registerFlow(flowId, flow);
-          logger.info(`Flujo predefinido ${flowId} cargado correctamente`);
-          return true;
-        }
-      } catch (predefinedError) {
-        logger.error(`Error al cargar flujo predefinido ${flowId}:`, predefinedError);
-      }
-    }
-
-    // Si no es un flujo predefinido, buscamos en la base de datos
-    if (config.supabase?.enabled) {
-      try {
-        const { getSupabaseClient } = await import('./supabase');
-        const supabase = getSupabaseClient();
-
-        // Obtener la plantilla específica
-        const { data: template, error } = await supabase
-          .from('chatbot_templates')
-          .select('id, name, react_flow_json, status')
-          .eq('id', flowId)
-          .single();
-
-        if (error) {
-          logger.error(`Error al obtener plantilla ${flowId} desde BD:`, error);
-          return false;
-        }
-
-        if (!template) {
-          logger.warn(`Plantilla ${flowId} no encontrada en la base de datos`);
-          return false;
-        }
-
-        // Convertir y registrar la plantilla
-        const result = registerTemplateAsFlow(template.id, template.react_flow_json);
-        if (result) {
-          logger.info(`Plantilla ${template.id} (${template.name}) cargada y registrada correctamente para tenant ${tenantId}`);
-          return true;
-        } else {
-          logger.warn(`No se pudo convertir la plantilla ${template.id} a flujo`);
-          return false;
-        }
-      } catch (dbError) {
-        logger.error(`Error al cargar plantilla ${flowId} desde BD:`, dbError);
-        return false;
-      }
-    } else {
-      logger.warn('Supabase deshabilitado, no se puede cargar la plantilla');
-      return false;
-    }
-
-    return false;
-  } catch (error) {
-    logger.error(`Error al cargar flujo ${flowId} para tenant ${tenantId}:`, error);
-    return false;
-  }
-};
-```
-
-También se ha modificado la función `processFlowMessage()` para usar esta carga dinámica:
-
-```typescript
-// Verificamos si el flujo ya está cargado
-let flow = getFlow(flowId);
-
-// Si el flujo no está cargado, intentamos cargarlo dinámicamente
-if (!flow) {
-  logger.info(`Flujo ${flowId} no está en el registro, intentando carga dinámica...`);
-  const loadSuccess = await loadFlowForTenant(flowId, tenantId);
-
-  if (loadSuccess) {
-    // Intentamos obtener el flujo nuevamente después de cargarlo
-    flow = getFlow(flowId);
-    logger.info(`Flujo ${flowId} cargado dinámicamente con éxito`);
-  } else {
-    logger.error(`No se pudo cargar el flujo ${flowId} para tenant ${tenantId}`);
-  }
+// En botFlowIntegration.ts
+// Si detectamos que es un nodo final o de despedida
+if (result.state?.isEndNode && result.state?.endMessage) {
+  // Guardar para enviar como mensajes separados
+  result.state.sendDespedidaAsSeparateMessage = true;
+  
+  // Enviar los mensajes como un array
+  return {
+    response: result.response,
+    state: result.state,
+    metrics: result.metrics
+  };
 }
 ```
 
-Esta solución tiene varias ventajas:
-1. Minimiza el uso de memoria al no cargar todas las plantillas al inicio
-2. Permite cargar plantillas específicas por tenant cuando se necesitan
-3. Simplifica el mantenimiento al no tener una carga centralizada de todas las plantillas
-4. Facilita la escalabilidad con muchas plantillas o tenants
-
-## 4. Activación de Flujos de Conversación
-
-**Problema**: Incluso después de cargar correctamente las plantillas, los flujos no se iniciaban adecuadamente:
-```
-[ERROR] No se pudo determinar cómo procesar el flujo [ID]
-```
-
-**Causa**: BuilderBot espera que las conversaciones se inicien con palabras clave específicas (INICIO, COMENZAR, HOLA), pero el sistema estaba intentando procesar el primer mensaje directamente sin activar el flujo con las palabras clave.
-
-**Solución implementada**:
-Modificamos `processFlowMessage` para detectar el primer mensaje de una conversación y tratarlo como una activación de flujo:
+### 2. Manejo de Mensajes Separados en API
 
 ```typescript
-// Verificamos si es el primer mensaje (no hay estado previo)
-const isFirstMessage = !prevState || Object.keys(prevState).length === 0;
-
-// Si es el primer mensaje, sobreescribimos el mensaje original con "HOLA"
-// para asegurarnos de que se active el flujo
-const processMessage = isFirstMessage ? "HOLA" : message;
-logger.info(`${isFirstMessage ? 'Primer mensaje en la sesión, activando flujo con "HOLA"' : 'Continuando flujo existente'}`);
-
-// Usamos processMessage en lugar de message para todas las llamadas al procesador
-const result = await flow.processMessage(
-  processMessage, // Puede ser "HOLA" para activar el flujo
-  userId,
-  sessionId,
-  initialState
-);
+// En text.ts
+// Comprobar si tenemos un mensaje de despedida para enviar por separado
+if (botResponse?.state?.sendDespedidaAsSeparateMessage === true &&
+    botResponse?.state?.endMessage) {
+    
+    const despedidaMessage = botResponse.state.endMessage;
+    
+    // Enviar los mensajes como array
+    return res.json({
+        success: true,
+        is_multi_message: true,
+        messages: [
+            responseText,  // Confirmación de cita
+            despedidaMessage // Mensaje de despedida
+        ],
+        processing_time_ms: processingTime,
+        tokens_used: tokensUsed
+    });
+}
 ```
 
-Esta mejora permite que cualquier mensaje inicial active el flujo, haciendo que la experiencia sea más natural para el usuario y manteniendo la compatibilidad con la forma en que BuilderBot espera que se inicien las conversaciones.
+### 3. Auto-flow Entre Nodos
+
+Implementación de avance automático entre nodos:
+
+```typescript
+// Si el nodo actual no requiere respuesta del usuario
+if (!currentNode.waitForResponse) {
+    // Buscar siguiente nodo y avanzar automáticamente
+    const nextNode = findNextNode(currentNode);
+    if (nextNode) {
+        // Procesar automáticamente el siguiente nodo
+        await processNode(nextNode);
+    }
+}
 ```
 
-## Conclusión
+## Integración con Variables del Sistema
 
-Los problemas identificados se centraban principalmente en la discrepancia entre el código del backend y el esquema de la base de datos. La solución implementó:
+Para una integración correcta con variables del sistema:
 
-1. Correcciones al esquema de la base de datos
-2. Mecanismos robustos para manejar IDs no-UUID
-3. Funciones RPC para acceso seguro a datos
+1. Asegurarse de que las variables se almacenen correctamente en el estado del flujo
+2. Verificar que los reemplazos de variables funcionen en todos los tipos de nodos
+3. Mantener consistencia en el formato de nombres de variables
 
-Estas mejoras hacen que el sistema sea más resiliente y evitan errores comunes relacionados con el manejo del estado de conversaciones.
+## Recomendaciones para Desarrolladores Backend
+
+1. **Pruebas de estado persistente**: Verificar que el estado se mantenga correctamente entre mensajes.
+2. **Logs detallados**: Mantener logs descriptivos para facilitar la depuración.
+3. **Validación de formatos de respuesta**: Asegurar que las respuestas del backend sigan un formato consistente.
+4. **Manejo de errores**: Implementar recuperación adecuada en caso de errores en el procesamiento.
+
+## Documentación Relacionada
+
+- [Arquitectura del Chatbot](../ARQUITECTURA_CHATBOT.md)
+- [Guía de BuilderBot](../GUIA_BUILDERBOT.md)
+- [Solución a Problemas del Chatbot (Frontend)](../../v2-frontend-pymebot/docs/solucion_problemas_chatbot.md)
+
+---
+
+*Documento creado: 11 de mayo de 2025*
+*Última actualización: 11 de mayo de 2025*

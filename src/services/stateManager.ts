@@ -16,6 +16,13 @@ import { config } from "../config";
 // Reexportar la función getSupabaseClient para que otros módulos puedan acceder a ella
 export { getSupabaseClient };
 
+// Cache local para estados cuando Supabase falla
+// Esta cache nos permite mantener el estado entre mensajes aun cuando hay errores de conectividad
+const localStateCache: Map<string, { state: Record<string, any>, lastUpdated: Date }> = new Map();
+
+// Tiempo de vida de la cache (30 minutos)
+const CACHE_TTL_MS = 30 * 60 * 1000;
+
 /**
  * Guarda el estado de una conversación en Supabase
  * 
@@ -38,6 +45,16 @@ export const saveConversationState = async (
       return false;
     }
 
+    // Generamos la clave para la cache
+    const cacheKey = `${tenantId}_${userId}_${sessionId}`;
+    
+    // Siempre guardamos en cache local, independientemente de Supabase
+    localStateCache.set(cacheKey, {
+      state: { ...state }, // Copia del estado
+      lastUpdated: new Date()
+    });
+    logger.debug(`Estado guardado en cache local para sesión ${sessionId}`);
+
     // Verificar si estamos en modo memoria (sin conexión a DB)
     if (!config.supabase.enabled) {
       logger.warn('Supabase no está habilitado, guardando estado en memoria únicamente');
@@ -57,26 +74,49 @@ export const saveConversationState = async (
       state.last_updated_at = new Date().toISOString();
 
       // Usamos la función RPC para guardar el estado con validación de tenant_id incorporada
-      const { data, error } = await supabase
-        .rpc('save_conversation_state', {
-          p_tenant_id: tenantId,
-          p_session_id: sessionId,
-          p_state_data: state
-        });
+      // IMPORTANTE: Hacemos la llamada asíncrona para no bloquear las respuestas HTTP
+      setImmediate(async () => {
+        try {
+          const { data, error } = await supabase
+            .rpc('save_conversation_state', {
+              p_tenant_id: tenantId,
+              p_session_id: sessionId,
+              p_state_data: state
+            });
 
-      if (error) {
-        logger.error(`Error al guardar estado de conversación: ${error.message}`);
-        return false;
-      }
+          if (error) {
+            logger.error(`Error al guardar estado de conversación en background: ${error.message}`);
+          } else {
+            logger.debug(`Estado guardado correctamente en background para sesión ${sessionId}`);
+          }
+        } catch (asyncError) {
+          logger.error(`Error asíncrono al guardar estado: ${asyncError}`);
+        }
+      });
 
-      logger.debug(`Estado guardado correctamente para sesión ${sessionId}`);
+      // Retornamos true inmediatamente ya que el guardado en cache local ya se hizo
       return true;
     } catch (dbError) {
-      logger.error('Error en operación de base de datos:', dbError);
+      // Mejorar el log del error
+      const errorMessage = dbError instanceof Error ? dbError.message : String(dbError);
+      
+      // Si es error 520 o similar, lo logueamos como warning, no como error crítico
+      if (errorMessage.includes('520') || errorMessage.includes('<!DOCTYPE html>')) {
+        logger.warn(`Error de conectividad con Supabase al guardar estado: Error 520. Sesión: ${sessionId}`);
+      } else {
+        logger.error(`Error en operación de base de datos: ${errorMessage}`);
+      }
       return false;
     }
   } catch (error) {
-    logger.error('Error al guardar estado de conversación:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    
+    // Si es error 520 o similar, lo logueamos como warning, no como error crítico
+    if (errorMessage.includes('520') || errorMessage.includes('<!DOCTYPE html>')) {
+      logger.warn(`Error de conectividad con Supabase al guardar estado: Error 520. Sesión: ${sessionId}`);
+    } else {
+      logger.error(`Error al guardar estado de conversación: ${errorMessage}`);
+    }
     return false;
   }
 };
@@ -99,6 +139,22 @@ export const loadConversationState = async (
     if (!tenantId || !userId || !sessionId) {
       logger.error('Parámetros inválidos al cargar estado de conversación');
       return null;
+    }
+
+    // Generamos la clave para la cache
+    const cacheKey = `${tenantId}_${userId}_${sessionId}`;
+    
+    // Primero intentamos cargar desde cache local
+    const cachedEntry = localStateCache.get(cacheKey);
+    if (cachedEntry) {
+      const cacheAge = Date.now() - cachedEntry.lastUpdated.getTime();
+      if (cacheAge < CACHE_TTL_MS) {
+        logger.info(`Estado cargado desde cache local para sesión ${sessionId} (edad: ${Math.round(cacheAge / 1000)}s)`);
+        return cachedEntry.state;
+      } else {
+        logger.debug(`Cache expirada para sesión ${sessionId}, eliminando...`);
+        localStateCache.delete(cacheKey);
+      }
     }
 
     // Verificar si estamos en modo memoria (sin conexión a DB)
@@ -140,14 +196,38 @@ export const loadConversationState = async (
       // waitingNodeId, etc. se mantengan correctamente entre peticiones
       const enhancedData = ensureStateConsistency(data);
 
-      logger.debug(`Estado cargado correctamente para sesión ${sessionId}`);
+      // Actualizamos la cache local con el estado recién cargado
+      localStateCache.set(cacheKey, {
+        state: { ...enhancedData },
+        lastUpdated: new Date()
+      });
+      logger.debug(`Estado cargado correctamente para sesión ${sessionId} y actualizado en cache local`);
+      
       return enhancedData;
     } catch (dbError) {
       logger.error('Error en operación de base de datos:', dbError);
       return null;
     }
   } catch (error) {
-    logger.error('Error al cargar estado de conversación:', error);
+    // Error mejorado con más detalle
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error(`Error al cargar estado de conversación: ${errorMessage}`);
+    
+    // Si el error es de conexión HTTP (como el error 520), retornamos un estado básico
+    if (errorMessage.includes('520') || errorMessage.includes('Error') || errorMessage.includes('timeout')) {
+      logger.warn(`Error de conectividad con Supabase. Retornando estado base para sesión ${sessionId}`);
+      return {
+        flow_id: 'default',
+        session_id: sessionId,
+        tenant_id: tenantId,
+        user_id: userId,
+        started_at: new Date().toISOString(),
+        last_updated_at: new Date().toISOString(),
+        // Importante: indicamos que no pudimos cargar el estado real
+        state_load_failed: true
+      };
+    }
+    
     return null;
   }
 };

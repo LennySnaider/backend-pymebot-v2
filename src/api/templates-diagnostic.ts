@@ -98,7 +98,27 @@ router.get('/:templateId', async (req, res) => {
     }
     
     // Información básica de la plantilla
-    const diagnosticResult = {
+    const diagnosticResult: {
+      id: any;
+      name: any;
+      type: any;
+      created_at: any;
+      updated_at: any;
+      hasReactFlowJson: boolean;
+      hasConfig: boolean;
+      contentSummary: {
+        nodesCount?: number;
+        edgesCount?: number;
+        startNodeExists?: boolean;
+        messageNodesCount?: number;
+        hasGreeting?: boolean;
+        hasInitialMessage?: boolean;
+        configError?: string;
+      };
+      messageExtractionResult: any;
+      flowDiagnosis: any;
+      config?: any;
+    } = {
       id: template.id,
       name: template.name,
       type: template.template_type,

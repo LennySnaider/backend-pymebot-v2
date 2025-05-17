@@ -44,7 +44,7 @@ interface FlowData {
  */
 export function findInitialMessage(flowData: FlowData): MessageExtractionResult {
   // Objeto para almacenar diagnósticos
-  const diagnostics = {
+  const diagnostics: MessageExtractionResult['diagnostics'] = {
     messageSource: 'no_message_found',
     nodesAnalyzed: 0,
     edgesAnalyzed: 0,
@@ -492,14 +492,14 @@ export function extractNodeContent(node: ReactFlowNode): string | null {
     { path: 'data.defaultMessage', value: node.data?.defaultMessage },
 
     // Rutas en node (propiedades directas)
-    { path: 'content', value: node.content },
-    { path: 'message', value: node.message },
-    { path: 'label', value: node.label },
-    { path: 'text', value: node.text },
-    { path: 'value', value: node.value },
-    { path: 'prompt', value: node.prompt },
-    { path: 'greeting', value: node.greeting },
-    { path: 'initialMessage', value: node.initialMessage },
+    { path: 'content', value: (node as any).content },
+    { path: 'message', value: (node as any).message },
+    { path: 'label', value: (node as any).label },
+    { path: 'text', value: (node as any).text },
+    { path: 'value', value: (node as any).value },
+    { path: 'prompt', value: (node as any).prompt },
+    { path: 'greeting', value: (node as any).greeting },
+    { path: 'initialMessage', value: (node as any).initialMessage },
 
     // Rutas anidadas en node.data.data
     { path: 'data.data.content', value: node.data?.data?.content },

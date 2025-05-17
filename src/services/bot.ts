@@ -61,10 +61,7 @@ const getBotInstance = (tenantId: string, userId: string): any => {
   const flow = createFlow([]);
 
   // Configuramos la base de datos con MemoryDB (compatible con keyPrefix)
-  const database = new MemoryDB({
-    // Usamos un prefijo para aislar datos por tenant
-    keyPrefix: `${tenantId}-`,
-  });
+  const database = new MemoryDB();
 
   // Creamos el bot con nuestro provider personalizado
   const bot = createBot({

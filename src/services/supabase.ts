@@ -66,6 +66,9 @@ export interface ChatbotTemplateBase {
   react_flow_json?: any; // O un tipo más específico si se conoce
   version?: number;
   created_by?: string; // UUID del usuario creador
+  // Estructura alternativa para compatibilidad con formato de API
+  nodes?: Record<string, any>;
+  entryNodeId?: string;
   // Añadir otros campos existentes si son necesarios: bot_type, is_deleted, vertical_id
 }
 
@@ -717,38 +720,41 @@ export const getTenantTemplatesWithFlows = async (
       `Se encontraron ${publishedTemplates.length} plantillas publicadas.`
     );
 
-    // 2. Obtener todos los flujos para el tenant actual desde la tabla flows
-    let flowsQuery = supabase
-      .from("flows")
-      .select("id, parent_template_id, is_active, tenant_id"); // Añadir tenant_id
+    // 2. Obtener todas las activaciones para el tenant actual desde la tabla tenant_chatbot_activations
+    let activationsQuery = supabase
+      .from("tenant_chatbot_activations")
+      .select("id, template_id, is_active, tenant_id");
 
     if (tenantFilter === null) {
-      flowsQuery = flowsQuery.is("tenant_id", null);
+      // Si es tenant default, buscar plantillas sin activación específica
+      activationsQuery = activationsQuery.is("tenant_id", null);
     } else {
-      flowsQuery = flowsQuery.eq("tenant_id", tenantFilter);
+      activationsQuery = activationsQuery.eq("tenant_id", tenantFilter);
     }
-    const { data: tenantFlows, error: flowsError } = await flowsQuery;
+    const { data: tenantActivations, error: activationsError } = await activationsQuery;
 
-    if (flowsError) {
+    if (activationsError) {
       logger.error(
-        `Error al obtener flujos para tenant ${tenantId} (filter: ${tenantFilter}):`,
-        flowsError
+        `Error al obtener activaciones para tenant ${tenantId} (filter: ${tenantFilter}):`,
+        activationsError
       );
-      // Continuamos para mostrar plantillas aunque no se encuentren flujos
+      // Continuamos para mostrar plantillas aunque no se encuentren activaciones
     }
     logger.debug(
-      `Se encontraron ${tenantFlows?.length ?? 0} flujos para el tenant.`
+      `Se encontraron ${tenantActivations?.length ?? 0} activaciones para el tenant.`
     );
 
-    // 3. Combinar resultados: Mapear plantillas publicadas y añadir datos del flujo si existe
+    // 3. Combinar resultados: Mapear plantillas publicadas y añadir datos de activación si existe
     const results = publishedTemplates.map((template): ChatTemplate => {
-      const flowInstance = tenantFlows?.find(
+      const activation = tenantActivations?.find(
         (
-          flow: Pick<
-            Flow,
-            "id" | "parent_template_id" | "is_active" | "tenant_id"
-          >
-        ) => flow.parent_template_id === template.id
+          act: {
+            id: string;
+            template_id: string;
+            is_active: boolean;
+            tenant_id: string;
+          }
+        ) => act.template_id === template.id
       );
 
       const isPublished = template.status === "published";
@@ -761,23 +767,23 @@ export const getTenantTemplatesWithFlows = async (
         created_at: template.created_at,
         updated_at: template.updated_at,
         status: template.status as "draft" | "published",
-        // 'is_active' aquí representa si la *instancia* del tenant está activa
-        is_active: flowInstance?.is_active ?? false,
+        // 'is_active' aquí representa si la activación del tenant está activa
+        is_active: activation?.is_active ?? false,
         isEnabled: isPublished, // Habilitada si la plantilla base está publicada
-        flowId: flowInstance?.id || null, // ID de la instancia en 'flows'
-        tenant_id: flowInstance?.tenant_id ?? null, // ID del tenant de la instancia
-        tokens_estimated: 500, // Default - ¿De dónde obtener este valor?
-        category: "General", // Default - ¿De dónde obtener este valor?
-        configuration: {}, // Default - ¿De dónde obtener este valor?
+        flowId: activation?.id || null, // ID de la activación
+        tenant_id: activation?.tenant_id ?? null, // ID del tenant de la activación
+        tokens_estimated: 500, // Default
+        category: "General", // Default
+        configuration: {}, // Default
         is_public: isPublished, // Asumir publicada = pública por ahora
-        avatarUrl: "/img/avatars/thumb-placeholder.jpg", // Default - ¿De dónde obtener este valor?
+        avatarUrl: "/img/avatars/thumb-placeholder.jpg", // Default
         version: template.version,
         author: template.created_by, // Usar created_by si existe
       };
     });
 
     logger.debug(
-      `Plantillas combinadas con flujos para tenant ${tenantId}: ${results.length} resultados.`
+      `Plantillas combinadas con activaciones para tenant ${tenantId}: ${results.length} resultados.`
     );
     return results;
   } catch (error) {
@@ -923,6 +929,90 @@ export const updateTemplateConfiguration = async (
     "updateTemplateConfiguration no implementada correctamente según el esquema actual."
   );
   return false; // Indicar fallo ya que la lógica es incorrecta
+};
+
+/**
+ * Verifica si un usuario está registrado
+ */
+export const isUserRegistered = async (
+  tenantId: string,
+  phoneNumber: string
+): Promise<boolean> => {
+  try {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from("tenant_users")
+      .select("id")
+      .eq("tenant_id", tenantId)
+      .eq("phone_number", phoneNumber)
+      .maybeSingle();
+
+    if (error) {
+      logger.error("Error verificando usuario:", error);
+      return false;
+    }
+
+    return !!data;
+  } catch (error) {
+    logger.error("Error en isUserRegistered:", error);
+    return false;
+  }
+};
+
+/**
+ * Crea una nueva conversación
+ */
+export const createNewConversation = async (
+  tenantId: string,
+  phoneNumber: string,
+  metadata?: Record<string, any>
+): Promise<string | null> => {
+  try {
+    const supabase = getSupabaseClient();
+    
+    // Crear o actualizar usuario
+    const { data: userData, error: userError } = await supabase
+      .from("tenant_users")
+      .upsert({
+        tenant_id: tenantId,
+        phone_number: phoneNumber,
+        is_active: true,
+        updated_at: new Date().toISOString()
+      }, { 
+        onConflict: 'tenant_id,phone_number',
+        ignoreDuplicates: false
+      })
+      .select("id")
+      .single();
+
+    if (userError) {
+      logger.error("Error creando/actualizando usuario:", userError);
+      return null;
+    }
+
+    // Crear nueva conversación
+    const { data: conversationData, error: convError } = await supabase
+      .from("conversations")
+      .insert({
+        tenant_id: tenantId,
+        user_id: userData.id,
+        is_active: true,
+        metadata: metadata || {},
+        last_message_at: new Date().toISOString()
+      })
+      .select("id")
+      .single();
+
+    if (convError) {
+      logger.error("Error creando conversación:", convError);
+      return null;
+    }
+
+    return conversationData.id;
+  } catch (error) {
+    logger.error("Error en createNewConversation:", error);
+    return null;
+  }
 };
 
 // --- Funciones RPC (Asegúrate que existan en Supabase SQL Editor) ---
