@@ -15,6 +15,9 @@ import { setCurrentSession, getSessionVariables } from './flowRegistryVariablePa
 import { dequeueMessages, hasMessages } from './buttonNavigationQueue';
 import { setSessionContext } from './sessionContext';
 import * as systemVariablesLoader from '../utils/systemVariablesLoader';
+import { findLeadByPhone, createLeadIfNotExists } from "./leadLookupService";
+import { processSalesFunnelActions } from "./salesFunnelService";
+import { getSessionStage } from "./flowRegistrySalesFix";
 
 // Estado local para flujos persistentes entre mensajes
 interface ExtendedFlowState {
@@ -40,6 +43,7 @@ interface ExtendedFlowState {
   startedAt: Date;
   lastUpdatedAt: Date;
   sessionId: string;
+  context: Record<string, any>;
 }
 
 const _localFlowStates: Record<string, ExtendedFlowState> = {};
@@ -379,7 +383,8 @@ export async function processFlowMessage(
           lastUpdatedAt: new Date(),
           lastActivity: new Date(),
           sessionStarted: savedState.data.sessionStarted || new Date(),
-          sessionId
+          sessionId,
+          context: savedState.data.context || {}
         } as ExtendedFlowState;
       } else {
         // Crear nuevo estado
@@ -398,7 +403,8 @@ export async function processFlowMessage(
           data: {},
           startedAt: new Date(),
           lastUpdatedAt: new Date(),
-          sessionId
+          sessionId,
+          context: {}
         } as ExtendedFlowState;
       }
     }
@@ -406,6 +412,62 @@ export async function processFlowMessage(
     // Asegurar que el estado tenga las propiedades requeridas
     if (!state.flowId) {
       state.flowId = 'lead-capture';
+    }
+
+    // Asegurar que tenemos un contexto
+    if (!state.context) {
+      state.context = {};
+    }
+    
+    // Asegurar que el tenantId esté en el estado para procesamiento del sales funnel
+    if (!state.tenantId && tenantId) {
+      state.tenantId = tenantId;
+    }
+    
+    // También añadirlo al contexto para compatibilidad
+    if (!state.context.tenantId && tenantId) {
+      state.context.tenantId = tenantId;
+    }
+
+    // Buscar o crear lead para este número de teléfono
+    try {
+      let leadId = state.context.leadId || state.context.lead_id;
+      
+      if (!leadId) {
+        // Si el phoneFrom es un lead ID (formato lead_XXXX), usarlo directamente
+        if (phoneFrom.startsWith('lead_')) {
+          leadId = phoneFrom.replace('lead_', '');
+          logger.info(`Usando lead ID existente desde identificador: ${leadId}`);
+        } else {
+          // Solo buscar/crear lead si es un número de teléfono real
+          const phonePattern = /^\+?\d{10,}$/; // Patrón simple para números de teléfono
+          if (phonePattern.test(phoneFrom.replace(/[\s-()]/g, ''))) {
+            // Buscar lead existente por teléfono
+            leadId = await findLeadByPhone(phoneFrom, tenantId);
+            
+            if (!leadId) {
+              // Crear nuevo lead si no existe
+              logger.info(`Creando nuevo lead para teléfono ${phoneFrom}`);
+              leadId = await createLeadIfNotExists(phoneFrom, tenantId, {
+                source: 'chatbot',
+                name: state.variables?.nombre_usuario || undefined
+              });
+            }
+          } else {
+            logger.warn(`phoneFrom "${phoneFrom}" no es un número de teléfono válido, no se creará lead`);
+          }
+        }
+        
+        if (leadId) {
+          // Guardar leadId en el contexto
+          state.context.leadId = leadId;
+          state.context.lead_id = leadId; // Guardar en ambos formatos para compatibilidad
+          logger.info(`Lead asociado a la conversación: ${leadId}`);
+        }
+      }
+    } catch (error) {
+      logger.error(`Error al buscar/crear lead: ${error}`);
+      // Continuar sin lead ID
     }
 
     // Guardar en caché local
@@ -575,15 +637,17 @@ export async function processFlowMessage(
         }
       }
       
-      // CAMBIO IMPORTANTE: Agregar metadata con tenantId y sessionId
+      // CAMBIO IMPORTANTE: Agregar metadata con tenantId, sessionId y leadId
       // Esto permite que el estado tenga acceso a estos valores
       const messageWithMetadata = {
         ...ctx,
         _metadata: {
           tenantId,
-          sessionId
+          sessionId,
+          leadId: state.context?.leadId || state.context?.lead_id
         },
-        _sessionId: sessionId  // Backup para compatibilidad
+        _sessionId: sessionId,  // Backup para compatibilidad
+        leadId: state.context?.leadId || state.context?.lead_id  // También pasar directamente
       };
       
       // También intentar inyectar en el provider para acceso global
@@ -661,14 +725,24 @@ export async function processFlowMessage(
           allButtons.push(...provider.messageMetadata.buttons);
         }
         
+        // Obtener el stage de la sesión si está disponible
+        const sessionStage = getSessionStage(sessionId);
+        
         const response = {
           answer: messages,
           media: [],
           buttons: allButtons,
-          delay: 0
+          delay: 0,
+          // Incluir salesStageId del contexto si está disponible - también chequear estado directo y sesión
+          context: {
+            ...(sessionStage && { currentLeadStage: sessionStage }),
+            ...(state.currentLeadStage && { currentLeadStage: state.currentLeadStage }),
+            ...(state.context?.currentLeadStage && { currentLeadStage: state.context.currentLeadStage })
+          }
         };
         
         logger.info(`[flowRegistry] Devolviendo ${messages.length} mensajes y ${allButtons.length} botones`);
+        logger.info(`[flowRegistry] Estado actual del lead: ${state.context?.currentLeadStage}`);
         logger.info(`[flowRegistry] Respuesta completa:`, JSON.stringify(response));
         return response;
       }
@@ -679,25 +753,42 @@ export async function processFlowMessage(
       
       // Construir respuesta basada en los mensajes capturados
       if (capturedMessages.length > 0) {
+        const sessionStage = getSessionStage(sessionId);
+        
         const response = {
           answer: capturedMessages.map(msg => ({ body: msg })),
           media: [],
           buttons: [],
-          delay: 0
+          delay: 0,
+          // Incluir salesStageId del contexto si está disponible - también chequear estado directo y sesión
+          context: {
+            ...(sessionStage && { currentLeadStage: sessionStage }),
+            ...(state.currentLeadStage && { currentLeadStage: state.currentLeadStage }),
+            ...(state.context?.currentLeadStage && { currentLeadStage: state.context.currentLeadStage })
+          }
         };
         
         logger.info(`[flowRegistry] Devolviendo respuesta con ${capturedMessages.length} mensajes`);
+        logger.info(`[flowRegistry] Estado actual del lead: ${state.context?.currentLeadStage}`);
         return response;
       }
       
       
       // Si nada funcionó, devolver un mensaje por defecto
       logger.warn(`[flowRegistry] No se obtuvieron respuestas del bot`);
+      const sessionStage = getSessionStage(sessionId);
+      
       return {
         answer: [{ body: "Lo siento, no pude procesar tu mensaje." }],
         media: [],
         buttons: [],
-        delay: 0
+        delay: 0,
+        // Incluir salesStageId del contexto si está disponible - también chequear estado directo y sesión
+        context: {
+          ...(sessionStage && { currentLeadStage: sessionStage }),
+          ...(state.currentLeadStage && { currentLeadStage: state.currentLeadStage }),
+          ...(state.context?.currentLeadStage && { currentLeadStage: state.context.currentLeadStage })
+        }
       };
       
     } catch (error) {

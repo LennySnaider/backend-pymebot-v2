@@ -17,6 +17,7 @@ import { getSystemVariablesForTenant, processTextWithSystemVariables } from '@/u
 import { forceReplaceCompanyName, fixButtonNodeSelection } from '@/utils/companyNameFix';
 import logger from '@/utils/logger';
 import { config } from '@/config';
+import { processSalesFunnelActions } from '@/services/salesFunnelService';
 
 // ESTRUCTURAS PARA MANEJO DE NODOS Y FLUJOS
 interface FlowNode {
@@ -1356,6 +1357,29 @@ async function processFlow(
     // Guardamos la respuesta en el estado
     state.last_response = response;
     
+    // Procesar acciones del sales funnel si hay un lead_id
+    if (state.lead_id && currentNode) {
+      try {
+        logger.info(`Procesando sales funnel para lead ${state.lead_id} en nodo ${currentNode.id}`);
+        
+        // Asegurar estructura para compatibilidad
+        const flowState = {
+          ...state,
+          leadId: state.lead_id,  // Asegurar que leadId esté disponible
+          tenantId: state.tenant_id
+        };
+        
+        // Verificar si el nodo tiene metadata del sales funnel
+        const nodeMetadata = currentNode.data || currentNode.metadata || {};
+        logger.info(`Metadata del nodo: ${JSON.stringify(nodeMetadata)}`);
+        
+        await processSalesFunnelActions(currentNode, flowState);
+      } catch (salesFunnelError) {
+        logger.error(`Error al procesar sales funnel: ${salesFunnelError}`);
+        // No interrumpimos el flujo principal si falla el sales funnel
+      }
+    }
+    
     return { response, state };
   } catch (error) {
     logger.error('Error al procesar flujo:', error);
@@ -1373,7 +1397,7 @@ export async function POST(request: NextRequest) {
   try {
     // Extraemos datos de la petición
     const data = await request.json();
-    const { text, user_id, tenant_id, session_id, template_id, bot_id } = data;
+    const { text, user_id, tenant_id, session_id, template_id, bot_id, lead_id } = data;
     
     // Validamos datos requeridos
     if (!text || !user_id || !tenant_id) {
@@ -1408,12 +1432,19 @@ export async function POST(request: NextRequest) {
         tenant_id,
         user_id,
         bot_id: botId,
+        lead_id: lead_id || null, // Agregar lead_id al estado
         variables: {},
         message_count: 0,
         started_at: new Date().toISOString(),
         last_updated_at: new Date().toISOString()
       };
       logger.info(`Creando nuevo estado de conversación para sesión ${sessionId}`);
+    } else {
+      // Si el estado existe, actualizamos el lead_id si viene en la petición
+      if (lead_id && !state.lead_id) {
+        state.lead_id = lead_id;
+        logger.info(`Actualizando lead_id en estado existente: ${lead_id}`);
+      }
     }
     
     // Incrementamos contador de mensajes

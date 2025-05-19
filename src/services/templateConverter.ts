@@ -18,9 +18,86 @@ import {
 } from '../models/flow.types';
 import { enqueueMessage } from './buttonNavigationQueue';
 import { getSessionContext } from './sessionContext';
+import { processSalesFunnelActions } from './salesFunnelService';
+import { setSessionStage } from './flowRegistrySalesFix';
 
 // Store global para flujos creados
 const globalButtonFlows: Record<string, any> = {};
+
+/**
+ * Helper para crear callback que procesa sales funnel
+ */
+function createSalesFunnelCallback(nodeData: any) {
+  return async (ctx: any, { state }: any) => {
+    try {
+      logger.info(`[SALES FUNNEL CALLBACK] Iniciando con nodeData:`, JSON.stringify(nodeData));
+      logger.info(`[SALES FUNNEL CALLBACK] ctx:`, JSON.stringify(ctx || {}));
+      logger.info(`[SALES FUNNEL CALLBACK] state:`, JSON.stringify(state || {}));
+      
+      // Asegurar que tenemos los metadatos necesarios
+      const metadata = ctx?._metadata || {};
+      const tenantId = state.tenantId || metadata.tenantId;
+      const sessionId = state.sessionId || metadata.sessionId;
+      const leadId = state.leadId || state.lead_id || ctx.leadId || metadata.leadId || state.get?.('leadId') || state.get?.('lead_id');
+      
+      logger.info(`[SALES FUNNEL CALLBACK] tenantId=${tenantId}, sessionId=${sessionId}, leadId=${leadId}`);
+      
+      // Solo procesar si el nodo tiene salesStageId
+      if (nodeData.salesStageId) {
+        logger.info(`[SALES FUNNEL CALLBACK] Procesando sales funnel para nodo: salesStageId=${nodeData.salesStageId}, leadId=${leadId}`);
+        
+        if (!leadId) {
+          logger.warn(`[SALES FUNNEL CALLBACK] No se encontró leadId, abortando procesamiento`);
+          return;
+        }
+        
+        const stateForFunnel = {
+          ...state,
+          tenantId,
+          leadId,
+          lead_id: leadId,
+          context: {
+            leadId,
+            lead_id: leadId,
+            tenantId,
+            sessionId
+          }
+        };
+        
+        // Crear estructura de nodo con metadata
+        const nodeForFunnel = {
+          id: nodeData.id,
+          type: nodeData.type,
+          metadata: {
+            salesStageId: nodeData.salesStageId
+          },
+          data: {
+            salesStageId: nodeData.salesStageId
+          }
+        };
+        
+        await processSalesFunnelActions(nodeForFunnel, stateForFunnel);
+        
+        // IMPORTANTE: Actualizar el estado para que se propague
+        if (state && typeof state.update === 'function') {
+          await state.update({
+            currentLeadStage: nodeData.salesStageId
+          });
+          logger.info(`[SALES FUNNEL CALLBACK] Estado actualizado con currentLeadStage: ${nodeData.salesStageId}`);
+          
+          // También guardar en el fix
+          if (metadata.sessionId) {
+            setSessionStage(metadata.sessionId, nodeData.salesStageId);
+          }
+        }
+      } else {
+        logger.info(`[SALES FUNNEL CALLBACK] Nodo sin salesStageId, saltando procesamiento`);
+      }
+    } catch (error) {
+      logger.error(`[SALES FUNNEL CALLBACK] Error procesando sales funnel: ${error}`);
+    }
+  };
+}
 
 /**
  * Interfaz para el resultado de la conversión
@@ -290,7 +367,37 @@ function buildFlowChain(
                            currentNode.data?.message || 
                            'Mensaje sin contenido';
       logger.info(`Agregando mensaje: ${messageContent}`);
-      flowChain = flowChain.addAnswer(messageContent);
+      
+      // Agregar callback para procesar sales funnel si el nodo tiene salesStageId
+      if (currentNode.salesStageId || currentNode.data?.salesStageId) {
+        const stageId = currentNode.salesStageId || currentNode.data?.salesStageId;
+        logger.info(`[TEMPLATE CONVERTER] Nodo ${currentNode.id} tiene salesStageId: ${stageId}`);
+        const nodeData = { 
+          salesStageId: stageId,
+          type: currentNode.type,
+          id: currentNode.id
+        };
+        flowChain = flowChain.addAnswer(messageContent, null, async (ctx, { state }) => {
+          await createSalesFunnelCallback(nodeData)(ctx, { state });
+          
+          // IMPORTANTE: También actualizar el estado global
+          if (state && typeof state.update === 'function') {
+            await state.update({
+              currentLeadStage: stageId
+            });
+            logger.info(`[TEMPLATE CONVERTER] Estado actualizado con currentLeadStage: ${stageId}`);
+            
+            // También guardar en el fix
+            const sessionContext = getSessionContext(ctx.from);
+            if (sessionContext?.sessionId) {
+              setSessionStage(sessionContext.sessionId, stageId);
+            }
+          }
+        });
+      } else {
+        logger.info(`[TEMPLATE CONVERTER] Nodo ${currentNode.id} NO tiene salesStageId`);
+        flowChain = flowChain.addAnswer(messageContent);
+      }
       break;
       
     case 'inputNode':
@@ -314,6 +421,27 @@ function buildFlowChain(
           sessionId: state.sessionId || metadata.sessionId
         });
         logger.info(`Variable ${variableName} actualizada con: ${ctx.body}`);
+        
+        // Procesar sales funnel si el nodo tiene salesStageId
+        if (currentNode.salesStageId || currentNode.data?.salesStageId) {
+          const stageId = currentNode.salesStageId || currentNode.data?.salesStageId;
+          const nodeData = { 
+            salesStageId: stageId 
+          };
+          await createSalesFunnelCallback(nodeData)(ctx, { state });
+          
+          // También actualizar el estado global
+          await state.update({
+            currentLeadStage: stageId
+          });
+          logger.info(`[INPUT NODE] Estado actualizado con currentLeadStage: ${stageId}`);
+          
+          // También guardar en el fix
+          const sessionContext = getSessionContext(ctx.from);
+          if (sessionContext?.sessionId) {
+            setSessionStage(sessionContext.sessionId, stageId);
+          }
+        }
       });
       break;
       
@@ -349,10 +477,26 @@ function buildFlowChain(
         // Solo agregar capture si waitForResponse es true
         if (waitForResponse) {
           answerOptions.capture = true;
-          flowChain = flowChain.addAnswer(text, answerOptions);
+          
+          // Agregar callback para procesar sales funnel si tiene salesStageId
+          if (currentNode.salesStageId || currentNode.data?.salesStageId) {
+            const nodeData = { 
+              salesStageId: currentNode.salesStageId || currentNode.data?.salesStageId 
+            };
+            flowChain = flowChain.addAnswer(text, answerOptions, createSalesFunnelCallback(nodeData));
+          } else {
+            flowChain = flowChain.addAnswer(text, answerOptions);
+          }
         } else {
           // Si no espera respuesta, solo mostrar los botones
-          flowChain = flowChain.addAnswer(text, answerOptions);
+          if (currentNode.salesStageId || currentNode.data?.salesStageId) {
+            const nodeData = { 
+              salesStageId: currentNode.salesStageId || currentNode.data?.salesStageId 
+            };
+            flowChain = flowChain.addAnswer(text, answerOptions, createSalesFunnelCallback(nodeData));
+          } else {
+            flowChain = flowChain.addAnswer(text, answerOptions);
+          }
         }
       }
       
