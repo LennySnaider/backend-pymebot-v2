@@ -159,7 +159,7 @@ export async function processSalesFunnelActions(
     }
     
     // Obtener el lead ID del contexto o directamente del estado
-    const leadId = state.leadId || state.lead_id || state.context?.leadId || state.context?.lead_id;
+    let leadId = state.leadId || state.lead_id || state.context?.leadId || state.context?.lead_id;
     const tenantId = state.tenantId || state.tenant_id || 'default';
     
     logger.info(`[SALES FUNNEL DEBUG] Lead ID: ${leadId}`);
@@ -169,6 +169,15 @@ export async function processSalesFunnelActions(
     if (!leadId) {
       logger.warn(`[SALES FUNNEL DEBUG] No se encontró leadId en el contexto para procesar acciones del sales funnel`);
       return true; // Continuar sin error
+    }
+    
+    // Normalizar el almacenamiento del leadId en todos los lugares posibles para mantener consistencia
+    if (leadId) {
+      if (!state.leadId) state.leadId = leadId;
+      if (!state.lead_id) state.lead_id = leadId;
+      if (!state.context) state.context = {};
+      if (!state.context.leadId) state.context.leadId = leadId;
+      if (!state.context.lead_id) state.context.lead_id = leadId;
     }
     
     // 1. Verificar si el lead cumple con la etapa requerida

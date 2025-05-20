@@ -16,6 +16,7 @@ import {
   getTenantTemplatesWithFlows,
 } from "../services/supabase";
 import providerService from "../services/providerService";
+import { processSalesFunnelActions } from "../services/salesFunnelService";
 
 // Interface general para respuestas de bot
 interface BotResponse {
@@ -419,6 +420,7 @@ async function handleChatRequest(req: AuthRequest, res: Response) {
     let tokensUsed = 0;
     let buttons: any[] = [];
     let media: any[] = [];
+    let salesStageId: string | undefined = undefined;
     
     // Extraer respuesta según el formato
     if (botResponse?.answer) {
@@ -437,6 +439,12 @@ async function handleChatRequest(req: AuthRequest, res: Response) {
       // Extraer media si existe
       if (botResponse.media && Array.isArray(botResponse.media)) {
         media = botResponse.media;
+      }
+      
+      // Extraer salesStageId si existe en el contexto
+      if (botResponse.context?.currentLeadStage) {
+        salesStageId = botResponse.context.currentLeadStage;
+        logger.info(`[text.ts] SalesStageId encontrado en contexto: ${salesStageId}`);
       }
     } else if (botResponse?.text) {
       responseText = botResponse.text;
@@ -510,7 +518,7 @@ async function handleChatRequest(req: AuthRequest, res: Response) {
       }
     }
 
-    // Devolver respuesta al cliente
+    // Devolver respuesta al cliente, incluyendo salesStageId si está disponible
     const response = {
       success: true,
       data: {
@@ -521,7 +529,14 @@ async function handleChatRequest(req: AuthRequest, res: Response) {
           sessionId,
           ...(tokensUsed > 0 && { tokensUsed }),
           ...(buttons.length > 0 && { buttons }),
-          ...(media.length > 0 && { media })
+          ...(media.length > 0 && { media }),
+          // Incluir salesStageId del contexto si está disponible (desde botResponse)
+          ...(salesStageId && { salesStageId }),
+          // También chequear en finalResponse por si acaso
+          ...(finalResponse.metadata?.currentLeadStage && { salesStageId: finalResponse.metadata.currentLeadStage }),
+          ...(finalResponse.metadata?.salesStageId && { salesStageId: finalResponse.metadata.salesStageId }),
+          ...(finalResponse.context?.currentLeadStage && { salesStageId: finalResponse.context.currentLeadStage }),
+          ...(finalResponse.currentLeadStage && { salesStageId: finalResponse.currentLeadStage })
         },
       },
     };

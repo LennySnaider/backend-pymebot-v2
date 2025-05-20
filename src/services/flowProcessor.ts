@@ -27,6 +27,7 @@ import logger from "../utils/logger";
 import { replaceVariablesEnhanced } from "../utils/variableReplacerFix";
 import { processFinalText } from "../utils/finalReplacer";
 import { processCompositeMessage, parseMessageWithEmbeddedMedia, CompositeMessage } from "../utils/compositeMessageProcessor";
+import { processSalesFunnelActions } from "./salesFunnelService";
 
 // Tipo para el callback de notificación de nodos
 type NodeVisitCallback = (nodeId: string) => void;
@@ -280,6 +281,34 @@ export async function processNode(
     logger.debug(
       `Tipo de nodo normalizado: ${nodeType} (original: ${node.type})`
     );
+
+    // Procesamos las acciones del sales funnel si aplican para este nodo
+    try {
+      const canProceed = await processSalesFunnelActions(node, state);
+      if (!canProceed) {
+        logger.info(`El nodo ${node.id} no puede ejecutarse debido a restricciones del sales funnel`);
+        const tenantId = state.tenantId || (state.context && state.context.tenantId) || 'default';
+        let message = "No puedes acceder a esta acción en tu etapa actual del proceso.";
+        
+        try {
+          message = await processFinalText(message, {
+            ...state,
+            ...state.context,
+            ...(state.variables || {})
+          }, tenantId);
+        } catch (processingError) {
+          // Si hay error al procesar, usamos el mensaje original
+        }
+        
+        return {
+          response: message,
+          error: "Sales funnel stage requirement not met"
+        };
+      }
+    } catch (error) {
+      logger.error(`Error al procesar acciones del sales funnel: ${error}`);
+      // Si hay error, continuamos con el procesamiento normal
+    }
 
     // Procesamos según el tipo de nodo
     switch (nodeType) {

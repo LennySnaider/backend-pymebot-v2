@@ -188,6 +188,10 @@ export interface ExtendedNodeMetadata {
   template?: string;          // Plantilla con variables para nodos de mensaje
   maxTokens?: number;         // Máximo de tokens para respuestas de IA
   useKnowledgeBase?: boolean; // Indica si se debe incluir la base de conocimiento
+  // Propiedades para integración con Sales Funnel
+  salesStageId?: string;      // Etapa actual del nodo
+  movesToStage?: string;      // Etapa a la que mueve el lead
+  requiresStage?: string;     // Etapa requerida para ejecutar el nodo
 }
 
 /**
