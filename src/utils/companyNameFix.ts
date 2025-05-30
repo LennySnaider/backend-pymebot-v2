@@ -8,7 +8,7 @@
  * @created 2025-05-14
  */
 
-import { getSupabaseClient } from "../services/supabase";
+import { getSupabaseAdminClient } from "../services/supabase";
 import logger from "./logger";
 
 /**
@@ -45,7 +45,7 @@ export async function getCompanyNameForTenant(tenantId: string): Promise<string>
     }
 
     // Si no hay valor en caché o ha expirado, consultamos la BD
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdminClient();
     
     // DOBLE VERIFICACIÓN: Intentar las dos tablas en paralelo para máxima eficiencia
     const [varResult, tenantResult] = await Promise.all([

@@ -54,7 +54,9 @@ export async function getConversationState(
   sessionId: string
 ): Promise<ConversationState | null> {
   try {
+    logger.info(`[DEBUG CONVERSATION] Obteniendo cliente Supabase...`);
     const supabase = getSupabaseClient();
+    logger.info(`[DEBUG CONVERSATION] Cliente Supabase obtenido exitosamente`);
     const { data, error } = await supabase
       .from('conversation_sessions')
       .select('*')

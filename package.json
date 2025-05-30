@@ -34,7 +34,8 @@
     "form-data": "^4.0.0",
     "jsonwebtoken": "^9.0.2",
     "openai": "^4.98.0",
-    "qr-image": "^3.2.0"
+    "qr-image": "^3.2.0",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

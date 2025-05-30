@@ -135,32 +135,106 @@ export interface Flow {
 let supabaseClient: SupabaseClient | null = null;
 let supabaseAdminClient: SupabaseClient | null = null;
 
+// Cache para plantillas con TTL de 5 minutos
+const templateCache = {
+  data: null as ChatTemplate[] | null,
+  timestamp: 0,
+  ttl: 5 * 60 * 1000, // 5 minutos
+  tenantId: null as string | null,
+  
+  isValid(tenantId: string): boolean {
+    return this.data !== null && 
+           this.tenantId === tenantId && 
+           Date.now() - this.timestamp < this.ttl;
+  },
+  
+  set(tenantId: string, data: ChatTemplate[]) {
+    this.data = data;
+    this.tenantId = tenantId;
+    this.timestamp = Date.now();
+  },
+  
+  clear() {
+    this.data = null;
+    this.timestamp = 0;
+    this.tenantId = null;
+  }
+};
+
 export const getSupabaseClient = (): SupabaseClient => {
   if (!supabaseClient) {
-    if (!config.supabase.url || !config.supabase.anonKey) {
-      logger.error("Faltan credenciales de Supabase (URL, ANON_KEY)");
-      throw new Error("Supabase URL o Anon Key no configuradas.");
+    if (!config.supabase.url || !config.supabase.serviceKey) {
+      logger.error("Faltan credenciales de Supabase (URL, SERVICE_KEY)");
+      throw new Error("Supabase URL o Service Key no configuradas.");
     }
-    supabaseClient = createClient(config.supabase.url, config.supabase.anonKey);
+    // Backend usa SERVICE_ROLE_KEY para operaciones del servidor
+    supabaseClient = createClient(config.supabase.url, config.supabase.serviceKey);
   }
   return supabaseClient;
 };
 
 export const getSupabaseAdminClient = (): SupabaseClient => {
   if (!supabaseAdminClient) {
+    // Verificar configuración de Supabase
     if (!config.supabase.url || !config.supabase.serviceKey) {
       logger.error("Faltan credenciales de Supabase Admin (URL, SERVICE_KEY)");
+      logger.error(`URL value: ${config.supabase.url}`);
+      logger.error(`Service Key value: ${config.supabase.serviceKey}`);
       throw new Error("Supabase URL o Service Key no configuradas.");
     }
     supabaseAdminClient = createClient(
       config.supabase.url,
-      config.supabase.serviceKey
+      config.supabase.serviceKey,
+      {
+        global: {
+          fetch: (url, options = {}) => {
+            return fetch(url, {
+              ...options,
+              signal: AbortSignal.timeout(30000), // 30 segundos timeout
+            });
+          },
+        },
+      }
     );
   }
   return supabaseAdminClient;
 };
 
 // --- Funciones Auxiliares ---
+
+/**
+ * Función helper para reintentar consultas a Supabase con manejo de errores
+ */
+async function retrySupabaseQuery<T>(
+  queryFn: () => Promise<{ data: T | null; error: any }>,
+  retries = 3,
+  delay = 1000
+): Promise<{ data: T | null; error: any }> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const result = await queryFn();
+      if (!result.error) {
+        return result;
+      }
+      
+      if (attempt === retries) {
+        return result; // Último intento, devolver el error
+      }
+      
+      logger.warn(`Reintento ${attempt}/${retries} fallido:`, result.error);
+      await new Promise(resolve => setTimeout(resolve, delay * attempt));
+    } catch (error) {
+      if (attempt === retries) {
+        return { data: null, error };
+      }
+      
+      logger.warn(`Reintento ${attempt}/${retries} con error:`, error);
+      await new Promise(resolve => setTimeout(resolve, delay * attempt));
+    }
+  }
+  
+  return { data: null, error: new Error('Max retries exceeded') };
+}
 
 /**
  * Convierte el tenant_id "default" a un UUID válido o valida el UUID existente.
@@ -230,7 +304,7 @@ const ensureValidUuid = (
  */
 export const isTenantValid = async (tenantId: string): Promise<boolean> => {
   try {
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdminClient();
     const validTenantId = getValidTenantUuid(tenantId);
 
     // Si el ID validado es el default, asumimos que no es un tenant real "activo"
@@ -286,7 +360,7 @@ export const logMessage = async (
       return null;
     }
 
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdminClient();
     const messageToInsert = { ...message };
 
     // Validar y asignar UUIDs
@@ -354,7 +428,7 @@ export const incrementUsage = async (
       return;
     }
 
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdminClient();
     const today = new Date().toISOString().split("T")[0];
     const tenantIdForDb = getValidTenantUuid(tenantId);
 
@@ -411,7 +485,7 @@ export const hasTenantExceededQuota = async (
       return false;
     }
 
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdminClient();
     const tenantIdForDb = getValidTenantUuid(tenantId);
 
     // No aplicar cuota al tenant por defecto
@@ -571,7 +645,7 @@ export const getActiveTemplatesByTenant = async (
       return [];
     }
 
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdminClient();
     const validTenantId = getValidTenantUuid(tenantId);
     logger.debug(
       `getActiveTemplatesByTenant: Buscando plantillas para tenant_id válido: ${validTenantId}`
@@ -682,6 +756,12 @@ export const getTenantTemplatesWithFlows = async (
   tenantId: string
 ): Promise<ChatTemplate[]> => {
   try {
+    // Verificar cache primero
+    if (templateCache.isValid(tenantId)) {
+      logger.debug(`Devolviendo plantillas desde cache para tenant ${tenantId}`);
+      return templateCache.data!;
+    }
+    
     if (!config.supabase.enabled) {
       logger.debug(
         "Supabase deshabilitado, no se obtendrán plantillas/flujos."
@@ -689,7 +769,7 @@ export const getTenantTemplatesWithFlows = async (
       return [];
     }
 
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdminClient();
     // Usamos NULL para representar al tenant 'default' en la base de datos
     const tenantFilter =
       tenantId === "default" ? null : getValidTenantUuid(tenantId); // Validar UUID aquí también
@@ -700,19 +780,59 @@ export const getTenantTemplatesWithFlows = async (
     );
 
     // 1. Obtener todas las plantillas base publicadas desde chatbot_templates
-    // Seleccionar columnas existentes relevantes
-    const { data: publishedTemplates, error: templateError } = await supabase
-      .from("chatbot_templates")
-      .select(
-        "id, name, description, status, created_at, updated_at, version, created_by"
-      )
-      .eq("status", "published");
+    // Optimización: Sin retry y con timeout corto
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 segundos máximo
+    
+    let publishedTemplates: any[] = [];
+    let templateError: any = null;
+    
+    try {
+      const { data, error } = await supabase
+        .from("chatbot_templates")
+        .select(
+          "id, name, description, status, created_at, updated_at, version, created_by"
+        )
+        .eq("status", "published")
+        .abortSignal(controller.signal);
+      
+      clearTimeout(timeoutId);
+      publishedTemplates = data || [];
+      templateError = error;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if ((error as any).name === 'AbortError') {
+        logger.warn("Timeout al obtener plantillas, usando fallback");
+      } else {
+        logger.error("Error en consulta a chatbot_templates:", error);
+      }
+      templateError = error;
+    }
 
     if (templateError) {
       logger.error("Error al obtener plantillas publicadas:", templateError);
-      return [];
+      // Retornar un template básico en caso de error para no dejar el chat sin funcionalidad
+      return [{
+        id: "fallback-template",
+        name: "Template Básico",
+        description: "Template básico disponible cuando hay problemas de conectividad",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        is_active: true,
+        tenant_id: tenantFilter,
+        tokens_estimated: 0,
+        category: "basic",
+        configuration: {},
+        is_public: true,
+        status: "published",
+        flowId: null,
+        isEnabled: true,
+        avatarUrl: "",
+        version: 1,
+        author: "system"
+      }];
     }
-    if (!publishedTemplates || publishedTemplates.length === 0) {
+    if (!publishedTemplates || (Array.isArray(publishedTemplates) && publishedTemplates.length === 0)) {
       logger.debug("No se encontraron plantillas publicadas.");
       return [];
     }
@@ -721,25 +841,38 @@ export const getTenantTemplatesWithFlows = async (
     );
 
     // 2. Obtener todas las activaciones para el tenant actual desde la tabla tenant_chatbot_activations
-    let activationsQuery = supabase
-      .from("tenant_chatbot_activations")
-      .select("id, template_id, is_active, tenant_id");
+    // Optimización: Con timeout corto y sin esperar si falla
+    let tenantActivations: any[] = [];
+    
+    const activationController = new AbortController();
+    const activationTimeoutId = setTimeout(() => activationController.abort(), 10000); // 10 segundos máximo
+    
+    try {
+      let activationsQuery = supabase
+        .from("tenant_chatbot_activations")
+        .select("id, template_id, is_active, tenant_id")
+        .abortSignal(activationController.signal);
 
-    if (tenantFilter === null) {
-      // Si es tenant default, buscar plantillas sin activación específica
-      activationsQuery = activationsQuery.is("tenant_id", null);
-    } else {
-      activationsQuery = activationsQuery.eq("tenant_id", tenantFilter);
+      if (tenantFilter === null) {
+        // Si es tenant default, buscar plantillas sin activación específica
+        activationsQuery = activationsQuery.is("tenant_id", null);
+      } else {
+        activationsQuery = activationsQuery.eq("tenant_id", tenantFilter);
+      }
+      
+      const { data, error } = await activationsQuery;
+      clearTimeout(activationTimeoutId);
+      
+      if (error) {
+        logger.warn(`Error al obtener activaciones (no crítico): ${error.message}`);
+      } else {
+        tenantActivations = data || [];
+      }
+    } catch (error) {
+      clearTimeout(activationTimeoutId);
+      logger.warn("Timeout o error al obtener activaciones, continuando sin activaciones");
     }
-    const { data: tenantActivations, error: activationsError } = await activationsQuery;
 
-    if (activationsError) {
-      logger.error(
-        `Error al obtener activaciones para tenant ${tenantId} (filter: ${tenantFilter}):`,
-        activationsError
-      );
-      // Continuamos para mostrar plantillas aunque no se encuentren activaciones
-    }
     logger.debug(
       `Se encontraron ${tenantActivations?.length ?? 0} activaciones para el tenant.`
     );
@@ -785,6 +918,10 @@ export const getTenantTemplatesWithFlows = async (
     logger.debug(
       `Plantillas combinadas con activaciones para tenant ${tenantId}: ${results.length} resultados.`
     );
+    
+    // Guardar en cache
+    templateCache.set(tenantId, results);
+    
     return results;
   } catch (error) {
     logger.error(
@@ -806,34 +943,91 @@ export const getTemplateById = async (
   // Ya no se marca como obsoleta, es necesaria para instanciar
   try {
     if (!config.supabase.enabled) return null;
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdminClient();
 
-    // Obtener la plantilla base por ID con los campos necesarios
-    const { data, error } = await supabase
-      .from("chatbot_templates")
-      .select(
+    // Obtener la plantilla base por ID con los campos necesarios con timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 segundos timeout
+    
+    try {
+      const { data, error } = await supabase
+        .from("chatbot_templates")
+        .select(
+          `
+          id, name, description, status, created_at, updated_at,
+          react_flow_json, version, created_by
         `
-        id, name, description, status, created_at, updated_at,
-        react_flow_json, version, created_by
-      `
-      ) // Seleccionar campos reales
-      .eq("id", templateId)
-      .single();
+        ) // Seleccionar campos reales
+        .eq("id", templateId)
+        .abortSignal(controller.signal)
+        .single();
 
-    if (error || !data) {
-      logger.error(
-        `Error al obtener plantilla base ${templateId} o no encontrada:`,
-        error
-      );
-      return null;
+      clearTimeout(timeoutId);
+
+      if (error || !data) {
+        logger.error(
+          `Error al obtener plantilla base ${templateId} o no encontrada:`,
+          error
+        );
+        return await getLocalFallbackTemplate(templateId);
+      }
+
+      // Devolver directamente los datos (coinciden con ChatbotTemplateBase)
+      return data as ChatbotTemplateBase;
+    } catch (abortError) {
+      clearTimeout(timeoutId);
+      logger.warn(`Timeout al obtener plantilla ${templateId}, usando fallback local`);
+      return await getLocalFallbackTemplate(templateId);
     }
-
-    // Devolver directamente los datos (coinciden con ChatbotTemplateBase)
-    return data as ChatbotTemplateBase;
   } catch (error) {
     logger.error(`Excepción al obtener plantilla base ${templateId}:`, error);
+    return await getLocalFallbackTemplate(templateId);
+  }
+};
+
+/**
+ * Obtiene una plantilla local como fallback cuando Supabase no responde
+ */
+async function getLocalFallbackTemplate(templateId: string): Promise<ChatbotTemplateBase | null> {
+  try {
+    // Si es la plantilla PymeBot V1, usar el JSON local
+    if (templateId === 'd5e05ba1-0146-4587-860b-4e984dd0b672') {
+      const fs = await import('fs');
+      const path = await import('path');
+      const templatePath = path.join(process.cwd(), 'pymebot-v1-template.json');
+      
+      if (fs.existsSync(templatePath)) {
+        const templateData = JSON.parse(fs.readFileSync(templatePath, 'utf8'));
+        logger.info(`Usando plantilla local fallback para ${templateId}`);
+        
+        return {
+          id: templateId,
+          name: templateData.name,
+          description: templateData.description,
+          status: 'published',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          react_flow_json: templateData.react_flow_json,
+          version: templateData.version || 1,
+          created_by: 'system'
+        } as ChatbotTemplateBase;
+      }
+    }
+    
+    logger.warn(`No hay plantilla fallback disponible para ${templateId}`);
+    return null;
+  } catch (error) {
+    logger.error(`Error cargando plantilla fallback:`, error);
     return null;
   }
+}
+
+/**
+ * Limpia el caché de plantillas para forzar una recarga
+ */
+export const clearTemplateCache = () => {
+  templateCache.clear();
+  logger.debug("Cache de plantillas limpiado");
 };
 
 /**
@@ -896,6 +1090,10 @@ export const setTemplateActiveStatus = async (
     logger.info(
       `Estado activo del flujo ${flowId} actualizado a ${isActive} para tenant ${validTenantId}`
     );
+    
+    // Limpiar caché cuando se cambia el estado de una plantilla
+    clearTemplateCache();
+    
     return true;
   } catch (error) {
     logger.error(
@@ -939,7 +1137,7 @@ export const isUserRegistered = async (
   phoneNumber: string
 ): Promise<boolean> => {
   try {
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdminClient();
     const { data, error } = await supabase
       .from("tenant_users")
       .select("id")
@@ -968,7 +1166,7 @@ export const createNewConversation = async (
   metadata?: Record<string, any>
 ): Promise<string | null> => {
   try {
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdminClient();
     
     // Crear o actualizar usuario
     const { data: userData, error: userError } = await supabase

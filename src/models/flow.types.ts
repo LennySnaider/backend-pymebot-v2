@@ -45,6 +45,14 @@ export enum NodeType {
   LIST_NODE = 'listNode',  // Nodo de lista (alternativo)
   TTS_NODE = 'ttsNode',    // Nodo de text-to-speech (alternativo)
   STT_NODE = 'sttNode',    // Nodo de speech-to-text (alternativo)
+  
+  // Nodos homologados para sistema inmobiliario
+  PRODUCT_NODE = 'productNode',              // Nodo de productos
+  SERVICES_NODE = 'servicesNode',            // Nodo de servicios
+  CHECK_AVAILABILITY_NODE = 'checkAvailabilityNode', // Nodo de verificación de disponibilidad
+  BOOK_APPOINTMENT_NODE = 'bookAppointmentNode',     // Nodo de reserva de citas
+  RESCHEDULE_APPOINTMENT_NODE = 'rescheduleAppointmentNode', // Nodo de reprogramación de citas
+  CANCEL_APPOINTMENT_NODE = 'cancelAppointmentNode'   // Nodo de cancelación de citas
 }
 
 /**
@@ -216,6 +224,7 @@ export interface FlowNode {
   type: NodeType | string; // String para admitir tipos personalizados
   content: string;
   metadata?: NodeMetadata;
+  data?: any; // Datos adicionales del nodo (para compatibilidad con ReactFlow)
   next?: string | ConditionalNext[];
   nextNodeId?: string;
   x?: number; // Posición X en el editor visual

@@ -1,4 +1,5 @@
 import { Response } from "express";
+import { randomUUID } from "crypto";
 import {
   processMessage,
   processMessageWithBuilderBot,
@@ -209,12 +210,30 @@ export async function handleIntegratedChat(req: AuthRequest, res: Response) {
 async function handleChatRequest(req: AuthRequest, res: Response) {
   try {
     // Extraemos información del usuario (desde el middleware de autenticación)
-    const userId = req.user?.id || req.body.user_id || "anonymous";
+    // Generar UUID válido para usuarios anónimos
+    const generateAnonymousId = () => {
+      return `anon-${randomUUID()}`;
+    };
+    
+    // SOLUCIÓN: Priorizar session_id para mantener persistencia de sesión
+    let userId: string;
+    let sessionId: string;
+    
+    if (req.body.session_id) {
+      // Si se proporciona session_id, usarlo como base para generar userId consistente
+      sessionId = req.body.session_id;
+      // Extraer userId del session_id o usar uno consistente
+      userId = req.user?.id || req.body.user_id || sessionId.replace('-session', '');
+    } else {
+      // Si no hay session_id, generar userId y crear session_id basado en él
+      userId = req.user?.id || req.body.user_id || generateAnonymousId();
+      sessionId = `${userId}-session`;
+    }
+    
     const tenantId =
       req.user?.tenantId ||
       req.body.tenant_id ||
       config.multitenant.defaultTenant;
-    const sessionId = req.body.session_id || `${userId}-${Date.now()}`;
     const botId = req.body.bot_id || "default"; // ¿Debería ser el flowId?
     const templateIdFromRequest = req.body.template_id; // ID opcional de la plantilla a utilizar
 
@@ -225,6 +244,44 @@ async function handleChatRequest(req: AuthRequest, res: Response) {
           : ""
       }`
     );
+    
+    // Verificar si se debe forzar el reinicio
+    const forceTemplateReset = req.body.force_template_reset === true;
+    
+    // Limpiar la caché si la plantilla CAMBIA o se fuerza el reinicio
+    if (templateIdFromRequest && templateIdFromRequest !== "default-template") {
+      const { getSessionContext, setSessionContext } = await import("../services/sessionContext");
+      
+      // Obtener el contexto actual
+      const currentContext = getSessionContext(userId);
+      const currentTemplateId = currentContext?.templateId;
+      
+      // Limpiar si la plantilla es diferente O si se fuerza el reinicio
+      if (currentTemplateId !== templateIdFromRequest || forceTemplateReset) {
+        const { clearSessionBot } = await import("../services/flowRegistryPatch");
+        const { FlowRegistry } = await import("../services/flowRegistry");
+        
+        const reason = forceTemplateReset ? '(forzado por frontend)' : '(cambio detectado)';
+        logger.info(`Plantilla cambió de ${currentTemplateId} a ${templateIdFromRequest} ${reason}, limpiando caché...`);
+        
+        // Limpiar bot de sesión
+        clearSessionBot(tenantId, sessionId);
+        
+        // Limpiar caché de flujos
+        FlowRegistry.clearCache();
+        
+        // Actualizar contexto de sesión con nueva plantilla
+        setSessionContext(userId, {
+          tenantId,
+          sessionId,
+          templateId: templateIdFromRequest
+        });
+        
+        logger.info(`Caché completa limpiada y contexto actualizado para cambio de plantilla a ${templateIdFromRequest}`);
+      } else {
+        logger.debug(`Plantilla ${templateIdFromRequest} ya está activa, manteniendo sesión actual`);
+      }
+    }
 
     // Registramos el inicio del procesamiento y creamos la variable para el tiempo total
     const startTime = Date.now();
@@ -329,6 +386,25 @@ async function handleChatRequest(req: AuthRequest, res: Response) {
         logger.error(`Error al buscar plantilla activa para fallback:`, error);
       }
     }
+    
+    // Si no tenemos templateId, buscar automáticamente plantilla activa
+    if (!useTemplateId) {
+      logger.info(`No se especificó template_id. Buscando plantilla activa para el tenant ${tenantId}`);
+      try {
+        const activeTemplates = await getTenantTemplatesWithFlows(tenantId);
+        const activeTemplate = activeTemplates.find(t => t.is_active);
+        
+        if (activeTemplate) {
+          useTemplateId = activeTemplate.id;
+          logger.info(`Usando plantilla activa encontrada: ${useTemplateId}`);
+        } else {
+          logger.warn(`No se encontró ninguna plantilla activa para el tenant ${tenantId}`);
+        }
+      } catch (error) {
+        logger.error(`Error al buscar plantilla activa automáticamente:`, error);
+      }
+    }
+    
     // La configuración específica del tenant/flujo se maneja dentro de processMessageWithFlows
 
     // Registrar mensaje del usuario en Supabase (si está habilitado)
@@ -377,11 +453,16 @@ async function handleChatRequest(req: AuthRequest, res: Response) {
           text, 
           tenantId, 
           sessionId,
-          useTemplateId
+          useTemplateId,
+          {
+            initialData: {
+              leadId: req.body.lead_id,
+              leadCreated: !!req.body.lead_id
+            }
+          }
         );
 
         logger.info(`Mensaje procesado exitosamente con BuilderBot para plantilla ${useTemplateId}`);
-        logger.debug(`Debug CLAUDE: Estructura de botResponse: ${typeof botResponse}`);
         
       } catch (builderbotError) {
         logger.error(`ERROR: No se pudo procesar el mensaje con BuilderBot:`, builderbotError);
@@ -442,8 +523,8 @@ async function handleChatRequest(req: AuthRequest, res: Response) {
       }
       
       // Extraer salesStageId si existe en el contexto
-      if (botResponse.context?.currentLeadStage) {
-        salesStageId = botResponse.context.currentLeadStage;
+      if ((botResponse as any).context?.currentLeadStage) {
+        salesStageId = (botResponse as any).context.currentLeadStage;
         logger.info(`[text.ts] SalesStageId encontrado en contexto: ${salesStageId}`);
       }
     } else if (botResponse?.text) {
@@ -470,9 +551,6 @@ async function handleChatRequest(req: AuthRequest, res: Response) {
     
     logger.info(`Respuesta del bot para session ${sessionId}: "${responseText.substring(0, 100)}..." (${tokensUsed} tokens)`);
     
-    logger.debug(`Debug CLAUDE: Respuesta original de botResponse:`, JSON.stringify(botResponse));
-    logger.debug(`Debug CLAUDE: responseText antes del procesamiento:`, responseText);
-    logger.debug(`Debug CLAUDE: tokensUsed:`, tokensUsed);
 
     // Siempre llamar al procesamiento con SupaDB
     const finalResponse = await processMessage(
@@ -533,10 +611,10 @@ async function handleChatRequest(req: AuthRequest, res: Response) {
           // Incluir salesStageId del contexto si está disponible (desde botResponse)
           ...(salesStageId && { salesStageId }),
           // También chequear en finalResponse por si acaso
-          ...(finalResponse.metadata?.currentLeadStage && { salesStageId: finalResponse.metadata.currentLeadStage }),
-          ...(finalResponse.metadata?.salesStageId && { salesStageId: finalResponse.metadata.salesStageId }),
-          ...(finalResponse.context?.currentLeadStage && { salesStageId: finalResponse.context.currentLeadStage }),
-          ...(finalResponse.currentLeadStage && { salesStageId: finalResponse.currentLeadStage })
+          ...((finalResponse as any).metadata?.currentLeadStage && { salesStageId: (finalResponse as any).metadata.currentLeadStage }),
+          ...((finalResponse as any).metadata?.salesStageId && { salesStageId: (finalResponse as any).metadata.salesStageId }),
+          ...((finalResponse as any).context?.currentLeadStage && { salesStageId: (finalResponse as any).context.currentLeadStage }),
+          ...((finalResponse as any).currentLeadStage && { salesStageId: (finalResponse as any).currentLeadStage })
         },
       },
     };

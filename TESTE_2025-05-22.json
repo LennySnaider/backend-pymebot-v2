@@ -1,0 +1,158 @@
+{
+  "name": "TESTE",
+  "description": "Descripción de la plantilla",
+  "status": "published",
+  "vertical_id": null,
+  "react_flow_json": {
+    "nodes": [
+      {
+        "id": "start-node",
+        "data": {
+          "label": "Inicio"
+        },
+        "type": "startNode",
+        "width": 151,
+        "height": 61,
+        "dragging": false,
+        "position": {
+          "x": -420.3700566836534,
+          "y": 164.05398271626785
+        },
+        "selected": false,
+        "positionAbsolute": {
+          "x": -420.3700566836534,
+          "y": 164.05398271626785
+        }
+      },
+      {
+        "id": "messageNode-1744252698670",
+        "data": {
+          "delay": 5000,
+          "label": "Mensaje",
+          "message": "Mucho gusto {{nombre_lead}}! \nGracias por tu mensaje",
+          "waitForResponse": false
+        },
+        "type": "messageNode",
+        "width": 286,
+        "height": 125,
+        "dragging": false,
+        "position": {
+          "x": 211.13080001078947,
+          "y": 142.23585984100527
+        },
+        "selected": false,
+        "positionAbsolute": {
+          "x": 211.13080001078947,
+          "y": 142.23585984100527
+        }
+      },
+      {
+        "id": "inputNode-1744317576066",
+        "data": {
+          "label": "Entrada Usuario",
+          "question": "Hola! Con quien tengo el gusto?",
+          "inputType": "text",
+          "variableName": "{{nombre_lead}}"
+        },
+        "type": "inputNode",
+        "width": 263,
+        "height": 105,
+        "dragging": false,
+        "position": {
+          "x": -184.41895162250228,
+          "y": 144.23415019292202
+        },
+        "selected": false,
+        "positionAbsolute": {
+          "x": -184.41895162250228,
+          "y": 144.23415019292202
+        }
+      },
+      {
+        "id": "listNode-1747928312311",
+        "data": {
+          "delay": 0,
+          "label": "Lista Interactiva",
+          "message": "Selecciona una opción:",
+          "listItems": [
+            {
+              "text": "Opción 1",
+              "value": "opcion_1",
+              "description": "Descripción de la opción 1"
+            },
+            {
+              "text": "Opción 2",
+              "value": "opcion_2",
+              "description": "Descripción de la opción 2"
+            },
+            {
+              "text": "Opción 3",
+              "value": "opcion_3",
+              "description": "Descripción de la opción 3"
+            },
+            {
+              "text": "Opción 4",
+              "value": "opcion_4",
+              "description": "Descripción de la opción 4"
+            },
+            {
+              "text": "Opción 5",
+              "value": "opcion_5",
+              "description": "Descripción de la opción 5"
+            }
+          ],
+          "listTitle": "Opciones disponibles",
+          "buttonText": "Ver opciones",
+          "variableName": "respuesta_lista",
+          "waitForResponse": true
+        },
+        "type": "listNode",
+        "width": 235,
+        "height": 283,
+        "dragging": false,
+        "position": {
+          "x": 624.3072784742172,
+          "y": 49.8845464123695
+        },
+        "selected": false,
+        "positionAbsolute": {
+          "x": 624.3072784742172,
+          "y": 49.8845464123695
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "reactflow__edge-start-node-inputNode-1744317576066",
+        "source": "start-node",
+        "target": "inputNode-1744317576066",
+        "animated": true,
+        "sourceHandle": null,
+        "targetHandle": null
+      },
+      {
+        "id": "reactflow__edge-inputNode-1744317576066-messageNode-1744252698670",
+        "source": "inputNode-1744317576066",
+        "target": "messageNode-1744252698670",
+        "animated": true,
+        "sourceHandle": null,
+        "targetHandle": null
+      },
+      {
+        "source": "messageNode-1744252698670",
+        "sourceHandle": null,
+        "target": "listNode-1747928312311",
+        "targetHandle": null,
+        "animated": true,
+        "id": "reactflow__edge-messageNode-1744252698670-listNode-1747928312311"
+      }
+    ],
+    "viewport": {
+      "x": 898.485896537085,
+      "y": 348.7235538128967,
+      "zoom": 0.39832004814279137
+    }
+  },
+  "exported_at": "2025-05-22T20:16:36.703Z",
+  "version": 1
+}

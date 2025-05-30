@@ -137,10 +137,10 @@ export async function processSalesFunnelActions(
     logger.info(`[SALES FUNNEL DEBUG] Procesando nodo: ${node.id}`);
     logger.info(`[SALES FUNNEL DEBUG] Tipo de nodo: ${node.type}`);
     logger.info(`[SALES FUNNEL DEBUG] Metadata del nodo: ${JSON.stringify(node.metadata)}`);
-    logger.info(`[SALES FUNNEL DEBUG] node.data: ${JSON.stringify(node.data)}`);
+    logger.info(`[SALES FUNNEL DEBUG] node.data: ${JSON.stringify((node as any).data)}`);
     
     // Verificar si el nodo tiene metadata del sales funnel - También verificar en node.data
-    const funnelData = (node.metadata || node.data) as SalesFunnelNodeData;
+    const funnelData = (node.metadata || (node as any).data) as SalesFunnelNodeData;
     
     if (!funnelData) {
       logger.info(`[SALES FUNNEL DEBUG] Nodo ${node.id} no tiene datos del sales funnel`);

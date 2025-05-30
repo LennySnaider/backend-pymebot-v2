@@ -12,6 +12,8 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+// Variables de entorno verificadas y cargadas correctamente
+
 export const config = {
   // Configuración general
   port: parseInt(process.env.PORT || '3090', 10),

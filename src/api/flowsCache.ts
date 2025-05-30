@@ -16,4 +16,26 @@ router.post("/clear-cache", async (req, res) => {
   }
 });
 
+// Limpiar caché específico para un template
+router.post("/clear-template/:templateId", async (req, res) => {
+  try {
+    const { templateId } = req.params;
+    const { tenantId } = req.body;
+    
+    // Limpiar caché específico
+    FlowRegistry.clearCache();
+    
+    logger.info(`Caché limpiado para template ${templateId} y tenant ${tenantId || 'default'}`);
+    res.json({ 
+      success: true, 
+      message: `Caché limpiado para template ${templateId}`,
+      templateId,
+      tenantId: tenantId || 'default'
+    });
+  } catch (error) {
+    logger.error("Error al limpiar caché específico:", error);
+    res.status(500).json({ success: false, error: "Error al limpiar caché específico" });
+  }
+});
+
 export default router;

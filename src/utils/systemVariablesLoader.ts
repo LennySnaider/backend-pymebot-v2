@@ -9,7 +9,7 @@
  */
 
 import logger from './logger';
-import { getSupabaseClient } from '../services/supabase';
+import { getSupabaseAdminClient } from '../services/supabase';
 
 // Variables globales del sistema (valores por defecto)
 const DEFAULT_SYSTEM_VARIABLES = {
@@ -100,7 +100,7 @@ export async function getTenantSystemVariables(
  */
 async function loadTenantVariablesFromSupabase(tenantId: string): Promise<Record<string, any>> {
   try {
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdminClient();
     
     // Primero intentamos cargar desde tenant_variables
     const { data: tenantVars, error: varsError } = await supabase

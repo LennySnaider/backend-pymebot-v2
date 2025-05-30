@@ -203,7 +203,7 @@ export async function createLeadIfNotExists(
     logger.info(`No se encontró lead existente, creando nuevo para teléfono ${phoneNumber}`);
     
     // Preparar metadata combinada
-    const combinedMetadata = {
+    const combinedMetadata: any = {
       chatbot_origin: true,
       original_phone: phoneNumber,
       created_at: new Date().toISOString(),

@@ -1,0 +1,296 @@
+{
+  "name": "PymeBot V1 - Agendamiento Completo",
+  "description": "Flujo completo de agendamiento con servicios, disponibilidad y confirmación con QR",
+  "status": "published",
+  "vertical_id": null,
+  "react_flow_json": {
+    "nodes": [
+      {
+        "id": "startNode-1",
+        "data": {
+          "label": "Inicio",
+          "keywords": [
+            "hola",
+            "inicio",
+            "ayuda",
+            "cita",
+            "agendar"
+          ]
+        },
+        "type": "startNode",
+        "width": 151,
+        "height": 61,
+        "dragging": false,
+        "position": {
+          "x": -2058.6454103441192,
+          "y": 99.19509564193868
+        },
+        "selected": false,
+        "positionAbsolute": {
+          "x": -2058.6454103441192,
+          "y": 99.19509564193868
+        }
+      },
+      {
+        "id": "messageNode-welcome",
+        "data": {
+          "message": "🤖 ¡Hola! Soy tu asistente virtual de {{company_name}}.\n\nEstoy aquí para ayudarte a agendar una cita con nosotros. 😊",
+          "waitForResponse": true,
+          "salesStageId": "nuevos"
+        },
+        "type": "messageNode",
+        "width": 286,
+        "height": 149,
+        "dragging": false,
+        "position": {
+          "x": -1794.91626904733,
+          "y": 53.7944633708685
+        },
+        "selected": false,
+        "positionAbsolute": {
+          "x": -1794.91626904733,
+          "y": 53.7944633708685
+        }
+      },
+      {
+        "id": "inputNode-name",
+        "data": {
+          "question": "Para comenzar, ¿Podrías compartirme tu nombre completo? 📝",
+          "inputType": "text",
+          "salesStageId": "prospectando",
+          "variableName": "nombre_lead"
+        },
+        "type": "inputNode",
+        "width": 286,
+        "height": 145,
+        "dragging": false,
+        "position": {
+          "x": -1372.4018406309192,
+          "y": 55.8569122256435
+        },
+        "selected": false,
+        "positionAbsolute": {
+          "x": -1372.4018406309192,
+          "y": 55.8569122256435
+        }
+      },
+      {
+        "id": "inputNode-phone",
+        "data": {
+          "question": "Perfecto {{nombre_lead}} ! 👋\n\nAhora necesito tu número de teléfono para confirmar la cita. 📱",
+          "inputType": "text",
+          "variableName": "telefono",
+          "salesStageId": "prospectando"
+        },
+        "type": "inputNode",
+        "width": 286,
+        "height": 145,
+        "dragging": false,
+        "position": {
+          "x": -900.3554726040318,
+          "y": 55.28386788461938
+        },
+        "selected": false,
+        "positionAbsolute": {
+          "x": -900.3554726040318,
+          "y": 55.28386788461938
+        }
+      },
+      {
+        "id": "messageNode-services-intro",
+        "data": {
+          "message": "Excelente! Te voy a mostrar nuestros productos disponibles 🎯",
+          "waitForResponse": false,
+          "salesStageId": "prospectando"
+        },
+        "type": "messageNode",
+        "width": 286,
+        "height": 109,
+        "dragging": false,
+        "position": {
+          "x": -434.21032667386044,
+          "y": 74.49840512109932
+        },
+        "selected": false,
+        "positionAbsolute": {
+          "x": -434.21032667386044,
+          "y": 74.49840512109932
+        }
+      },
+      {
+        "id": "categories-1748526236076",
+        "type": "categories",
+        "position": {
+          "x": 23.86629640974843,
+          "y": 75.62388157122905
+        },
+        "data": {
+          "label": "Nodo",
+          "message": "Por favor selecciona una categoría:",
+          "waitForResponse": true,
+          "salesStageId": "prospectando",
+          "showSubcategories": false
+        },
+        "width": 282,
+        "height": 105,
+        "selected": false,
+        "positionAbsolute": {
+          "x": 23.86629640974843,
+          "y": 75.62388157122905
+        },
+        "dragging": false
+      },
+      {
+        "id": "products-1748376115076",
+        "data": {
+          "label": "Nodo",
+          "salesStageId": "prospectando",
+          "waitForResponse": true
+        },
+        "type": "products",
+        "width": 286,
+        "height": 109,
+        "dragging": false,
+        "position": {
+          "x": 425.3082420988849,
+          "y": 72.70422775294259
+        },
+        "selected": false,
+        "positionAbsolute": {
+          "x": 425.3082420988849,
+          "y": 72.70422775294259
+        }
+      },
+      {
+        "id": "messageNode-confirm-service",
+        "data": {
+          "message": "Has seleccionado: *{{selected_product}}*\n\nAhora voy a verificar la disponibilidad para tu cita 📅",
+          "waitForResponse": false,
+          "salesStageId": "calificacion"
+        },
+        "type": "messageNode",
+        "width": 286,
+        "height": 149,
+        "dragging": false,
+        "position": {
+          "x": 848.9962720120357,
+          "y": 57.724423044587326
+        },
+        "selected": false,
+        "positionAbsolute": {
+          "x": 848.9962720120357,
+          "y": 57.724423044587326
+        }
+      },
+      {
+        "id": "messageNode-goodbye",
+        "data": {
+          "message": "¡Muchas gracias por tu interés en {{company_name}}! 🙏\n\nUno de nuestros asesores se contactará contigo pronto.\n\n¡Que tengas un excelente día! 😊",
+          "waitForResponse": false,
+          "salesStageId": "confirmado"
+        },
+        "type": "messageNode",
+        "width": 286,
+        "height": 189,
+        "dragging": false,
+        "position": {
+          "x": 1200,
+          "y": 60
+        },
+        "selected": false,
+        "positionAbsolute": {
+          "x": 1200,
+          "y": 60
+        }
+      },
+      {
+        "id": "endNode-1",
+        "data": {
+          "label": "Fin"
+        },
+        "type": "endNode",
+        "width": 235,
+        "height": 85,
+        "dragging": false,
+        "position": {
+          "x": 1600,
+          "y": 60
+        },
+        "selected": false,
+        "positionAbsolute": {
+          "x": 1600,
+          "y": 60
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "startNode-1",
+        "target": "messageNode-welcome"
+      },
+      {
+        "id": "e2",
+        "source": "messageNode-welcome",
+        "target": "inputNode-name"
+      },
+      {
+        "id": "e3",
+        "source": "inputNode-name",
+        "target": "inputNode-phone"
+      },
+      {
+        "id": "e4",
+        "source": "inputNode-phone",
+        "target": "messageNode-services-intro"
+      },
+      {
+        "source": "messageNode-services-intro",
+        "sourceHandle": null,
+        "target": "categories-1748526236076",
+        "targetHandle": null,
+        "animated": true,
+        "id": "reactflow__edge-messageNode-services-intro-categories-1748526236076"
+      },
+      {
+        "source": "categories-1748526236076",
+        "sourceHandle": null,
+        "target": "products-1748376115076",
+        "targetHandle": null,
+        "animated": true,
+        "id": "reactflow__edge-categories-1748526236076-products-1748376115076"
+      },
+      {
+        "id": "reactflow__edge-products-1748376115076-messageNode-confirm-service",
+        "source": "products-1748376115076",
+        "target": "messageNode-confirm-service",
+        "animated": true,
+        "sourceHandle": null,
+        "targetHandle": null
+      },
+      {
+        "source": "messageNode-confirm-service",
+        "sourceHandle": null,
+        "target": "messageNode-goodbye",
+        "targetHandle": null,
+        "animated": true,
+        "id": "reactflow__edge-messageNode-confirm-service-messageNode-goodbye"
+      },
+      {
+        "source": "messageNode-goodbye",
+        "sourceHandle": null,
+        "target": "endNode-1",
+        "targetHandle": null,
+        "animated": true,
+        "id": "reactflow__edge-messageNode-goodbye-endNode-1"
+      }
+    ],
+    "viewport": {
+      "x": -19.166247834354408,
+      "y": 131.74464667368642,
+      "zoom": 0.964598184584138
+    }
+  },
+  "exported_at": "2025-05-29T15:11:58.166Z",
+  "version": 1
+}

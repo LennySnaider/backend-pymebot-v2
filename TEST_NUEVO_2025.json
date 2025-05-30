@@ -1,0 +1,64 @@
+{
+  "nodes": {
+    "start-node": {
+      "id": "start-node",
+      "type": "start",
+      "position": { "x": 100, "y": 100 },
+      "data": { "label": "Inicio" }
+    },
+    "input-1": {
+      "id": "input-1",
+      "type": "inputNode",
+      "position": { "x": 300, "y": 100 },
+      "data": {
+        "question": "¿Cuál es tu nombre?",
+        "variableName": "{{nombre_lead}}"
+      }
+    },
+    "message-1": {
+      "id": "message-1", 
+      "type": "messageNode",
+      "position": { "x": 500, "y": 100 },
+      "data": {
+        "message": "Hola {{nombre_lead}}, gracias por contactarnos!",
+        "waitForResponse": false
+      }
+    },
+    "list-1": {
+      "id": "list-1",
+      "type": "listNode", 
+      "position": { "x": 700, "y": 100 },
+      "data": {
+        "message": "¿En qué podemos ayudarte?",
+        "listTitle": "Opciones disponibles",
+        "buttonText": "Ver opciones",
+        "listItems": [
+          { "text": "Información general", "value": "info", "description": "Conoce más sobre nosotros" },
+          { "text": "Soporte técnico", "value": "support", "description": "Ayuda con problemas técnicos" },
+          { "text": "Ventas", "value": "sales", "description": "Información sobre productos" }
+        ],
+        "variableName": "{{opcion_seleccionada}}"
+      }
+    }
+  },
+  "edges": [
+    {
+      "id": "e1",
+      "source": "start-node",
+      "target": "input-1",
+      "type": "default"
+    },
+    {
+      "id": "e2", 
+      "source": "input-1",
+      "target": "message-1",
+      "type": "default"
+    },
+    {
+      "id": "e3",
+      "source": "message-1", 
+      "target": "list-1",
+      "type": "default"
+    }
+  ]
+}

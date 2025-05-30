@@ -11,5 +11,6 @@ import { FlowState } from "./flow.types";
 export interface ExtendedFlowState extends FlowState {
   tenantId?: string;
   variables?: Record<string, any>;
+  currentLeadStage?: string; // Etapa actual del lead en el sales funnel
   [key: string]: any; // Permitir propiedades adicionales
 }

@@ -18,7 +18,7 @@ import logger from "../utils/logger";
  * Intercepta mensajes y los maneja sin enviarlos por WhatsApp
  */
 export class WebProvider extends ProviderClass {
-  vendor: EventEmitter;
+  declare vendor: EventEmitter;
   globalVendorArgs: any = {};
   busEvents = (): { event: string; func: Function; }[] => [];
   queueMessage: string | null = null;
@@ -28,7 +28,6 @@ export class WebProvider extends ProviderClass {
   sessionId?: string;  // Añadir propiedad para sessionId
   templateConfig: Record<string, any> | null = null;
   messageMetadata: Record<string, any> = {};
-  private emitter: EventEmitter;
 
   /**
    * Constructor del proveedor web
@@ -41,8 +40,7 @@ export class WebProvider extends ProviderClass {
     this.userId = userId;
     this.tenantId = tenantId;
     this.sessionId = sessionId;
-    this.emitter = new EventEmitter();
-    this.vendor = this.emitter;
+    this.vendor = new EventEmitter();
     logger.info(`WebProvider inicializado para usuario ${userId} de tenant ${tenantId}${sessionId ? ` con sesión ${sessionId}` : ''}`);
   }
 
@@ -70,8 +68,13 @@ export class WebProvider extends ProviderClass {
     logger.info(`[WebProvider] this.userId: ${this.userId}`);
     
     // Solo procesamos si el userId coincide
-    if (userId !== this.userId) {
-      logger.warn(`[WebProvider] userId no coincide, ignorando mensaje`);
+    // El this.userId puede tener el formato userId-sessionId, extraemos solo el userId base
+    const baseUserId = this.userId.includes('-') && this.sessionId 
+      ? this.userId.replace(`-${this.sessionId}`, '') 
+      : this.userId;
+    
+    if (userId !== this.userId && userId !== baseUserId) {
+      logger.warn(`[WebProvider] userId no coincide (recibido: ${userId}, esperado: ${this.userId} o ${baseUserId}), ignorando mensaje`);
       return true as any;
     }
     
@@ -260,6 +263,16 @@ export class WebProvider extends ProviderClass {
   clearQueue(): void {
     this.queuedMessages = [];
     this.queueMessage = null;
+  }
+
+  /**
+   * Registrar un listener de eventos
+   * @param eventName Nombre del evento
+   * @param callback Función callback
+   */
+  on(eventName: string, callback: Function) {
+    logger.info(`[WebProvider] Registrando listener para evento: ${eventName}`);
+    this.vendor.on(eventName, callback);
   }
 
   /**

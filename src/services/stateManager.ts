@@ -9,12 +9,12 @@
  * @created 2025-05-10
  */
 
-import { getSupabaseClient } from "./supabase";
+import { getSupabaseAdminClient } from "./supabase";
 import logger from "../utils/logger";
 import { config } from "../config";
 
-// Reexportar la función getSupabaseClient para que otros módulos puedan acceder a ella
-export { getSupabaseClient };
+// Reexportar la función getSupabaseAdminClient para que otros módulos puedan acceder a ella
+export { getSupabaseAdminClient };
 
 // Cache local para estados cuando Supabase falla
 // Esta cache nos permite mantener el estado entre mensajes aun cuando hay errores de conectividad
@@ -63,7 +63,7 @@ export const saveConversationState = async (
     }
 
     try {
-      const supabase = getSupabaseClient();
+      const supabase = getSupabaseAdminClient();
 
       // Aseguramos que el user_id esté dentro del state_data para mantenerlo ahí
       if (!state.user_id) {
@@ -172,7 +172,7 @@ export const loadConversationState = async (
     }
 
     try {
-      const supabase = getSupabaseClient();
+      const supabase = getSupabaseAdminClient();
 
       // Usamos la función RPC para cargar el estado con validación de tenant_id incorporada
       const { data, error } = await supabase
@@ -362,7 +362,7 @@ export const getActiveSessions = async (
       return [];
     }
 
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdminClient();
 
     // Crear una consulta personalizada para obtener las sesiones activas
     // con la función get_valid_tenant_uuid para convertir el tenant_id
@@ -409,7 +409,7 @@ export const finalizeSession = async (
       return true;
     }
 
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdminClient();
 
     // Usar la función RPC para finalizar la sesión con validación de tenant_id incorporada
     const { data, error } = await supabase
@@ -552,7 +552,7 @@ export const migrateVariablesToNewTemplate = async (
   newTemplateId: string
 ): Promise<number> => {
   try {
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdminClient();
     
     // Buscamos sesiones activas con la plantilla antigua
     const { data, error } = await supabase

@@ -7,6 +7,10 @@
  * @updated 2025-04-26
  */
 
+// Cargar variables de entorno antes que cualquier otro módulo
+import dotenv from "dotenv";
+dotenv.config();
+
 import express from "express";
 import { createBot, createFlow, MemoryDB } from "@builderbot/bot";
 import cors from "cors";
@@ -31,6 +35,11 @@ import systemRouter from "./api/system"; // Router para información del sistema
 import connectionTestRouter from "./api/connection-test"; // Router para pruebas de conexión
 import builderbotRouter from "./api/builderbot-integration"; // Importamos router de integración con BuilderBot
 import variablesRouter from "./api/variables"; // Router para gestión de variables
+import propertiesRouter from "./api/properties"; // Router para gestión de propiedades inmobiliarias
+import flowsCacheRouter from "./api/flowsCache"; // Router para gestión de caché de flujos
+import productCategoriesRouter from "./api/product-categories"; // Router para gestión de categorías de productos
+import productsRouter from "./api/products"; // Router para gestión de productos
+import cacheRouter from "./api/cache"; // Router para gestión de caché
 import logger from "./utils/logger";
 import { initWhatsAppProvider } from "./provider/whatsappProvider";
 import { FlowService } from "./services/flowService";
@@ -158,8 +167,12 @@ app.use("/api/templates-diagnostic", templatesDiagnosticRouter); // Registramos 
 app.use("/api/system", systemRouter); // Registramos el router de información del sistema
 app.use("/api/connection-test", connectionTestRouter); // Registramos el router de prueba de conexión
 app.use("/api/builderbot", builderbotRouter); // Registramos el router de integración con BuilderBot
+app.use("/api/properties", propertiesRouter); // Registramos el router de propiedades inmobiliarias
 app.use("/api/variables", variablesRouter); // Registramos el router de variables
-app.use("/api/variables", variablesRouter); // Registramos el router de gestión de variables
+app.use("/api/flows-cache", flowsCacheRouter); // Registramos el router de caché de flujos
+app.use("/api/product-categories", productCategoriesRouter); // Registramos el router de categorías de productos
+app.use("/api/products", productsRouter); // Registramos el router de productos
+app.use("/api/cache", cacheRouter); // Registramos el router de caché
 
 // Inicialización de la aplicación
 const main = async () => {
@@ -266,6 +279,8 @@ const main = async () => {
       logger.info(`[API System]: ${serverUrl}/api/system`);
       logger.info(`[API Connection Test]: ${serverUrl}/api/connection-test`);
       logger.info(`[API BuilderBot]: ${serverUrl}/api/builderbot`);
+      logger.info(`[API Cache]: ${serverUrl}/api/cache`);
+      logger.info(`[API Properties]: ${serverUrl}/api/properties`);
       logger.info(`[API Variables]: ${serverUrl}/api/variables`);
       logger.info(`[CORS Test]: ${serverUrl}/cors-test`);
 
