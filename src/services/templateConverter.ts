@@ -188,6 +188,19 @@ export async function convertTemplateToBuilderbotFlow(
       };
     }
     
+    // DEBUG: Logging de nodos categories y products desde la plantilla
+    Object.entries(nodes).forEach(([nodeId, node]) => {
+      if (['categories', 'categoriesNode', 'categories-node', 'products', 'productsNode', 'products-node'].includes(node.type)) {
+        logger.info(`[TEMPLATE LOAD DEBUG] Nodo ${nodeId} (${node.type}) desde plantilla:`, {
+          data: node.data,
+          metadata: node.metadata,
+          waitForResponse: node.data?.waitForResponse,
+          hasOptions: !!(node.data?.options),
+          hasButtons: !!(node.data?.buttons)
+        });
+      }
+    });
+    
     // Verificar que tenemos un nodo inicial
     if (!startNodeId || !nodes[startNodeId]) {
       logger.error(`No se encontró nodo inicial válido: ${startNodeId}`);
@@ -316,6 +329,14 @@ export async function convertTemplateToBuilderbotFlow(
     logger.info(`Flujo creado exitosamente con ${allFlows.length} subflujos`);
     logger.info(`Flujos de botones registrados: ${Object.keys(globalButtonFlows).join(', ')}`);
     
+    // DEBUG: Serializar el flujo creado para verificar capture
+    try {
+      const serializedFlow = createdFlow.flowSerialize();
+      logger.info(`[TEMPLATE CONVERTER DEBUG] Flujo serializado:`, JSON.stringify(serializedFlow, null, 2));
+    } catch (e) {
+      logger.warn(`[TEMPLATE CONVERTER DEBUG] No se pudo serializar el flujo:`, e);
+    }
+    
     return {
       flow: createdFlow,
       entryKeywords,
@@ -351,6 +372,36 @@ function buildFlowChain(
   
   processedNodes.add(nodeId);
   logger.info(`Procesando nodo ${nodeId} de tipo ${currentNode.type}`);
+  
+  // DEBUG: Logging completo del nodo si es categories o products
+  if (['categories', 'categoriesNode', 'categories-node', 'products', 'productsNode', 'products-node'].includes(currentNode.type)) {
+    logger.info(`[FLOW CHAIN DEBUG] Nodo especial detectado:`, {
+      nodeId,
+      type: currentNode.type,
+      data: currentNode.data,
+      metadata: currentNode.metadata,
+      content: currentNode.content
+    });
+  }
+  
+  // 🔧 CORRECCIÓN AUTOMÁTICA: Nodos que deben esperar respuesta del usuario
+  if (currentNode.data) {
+    const hasButtons = currentNode.data.buttons && Array.isArray(currentNode.data.buttons) && currentNode.data.buttons.length > 0;
+    const hasOptions = currentNode.data.options && Array.isArray(currentNode.data.options) && currentNode.data.options.length > 0;
+    const isInteractiveNodeType = ['buttonsNode', 'buttons-node', 'inputNode', 'input-node', 'categories', 'categoriesNode', 'products', 'productsNode', 'listNode', 'list-node'].includes(currentNode.type);
+    
+    // Si es un nodo interactivo y no tiene waitForResponse definido, añadirlo
+    if (isInteractiveNodeType && currentNode.data.waitForResponse === undefined) {
+      logger.info(`🔧 CORRECCIÓN: Nodo ${nodeId} (${currentNode.type}) es interactivo pero no tiene waitForResponse. Añadiendo waitForResponse=true.`);
+      currentNode.data.waitForResponse = true;
+    }
+    
+    // Si tiene botones/opciones pero waitForResponse es false, corregirlo
+    if ((hasButtons || hasOptions || isInteractiveNodeType) && currentNode.data.waitForResponse === false) {
+      logger.info(`🔧 CORRECCIÓN: Nodo ${nodeId} (${currentNode.type}) tiene botones/opciones pero waitForResponse=false. Corrigiendo a true.`);
+      currentNode.data.waitForResponse = true;
+    }
+  }
   
   // Si este nodo es el destino de un botón, necesitamos procesarlo diferente
   const isButtonTarget = edges.some(edge => 
@@ -510,6 +561,91 @@ function buildFlowChain(
       // Para condiciones, simplemente continuar con el flujo por defecto
       break;
       
+    case 'categories':
+    case 'categoriesNode':
+    case 'categories-node':
+      logger.info(`Procesando nodo categories: ${nodeId}`);
+      logger.info(`[CATEGORIES DEBUG] currentNode.data:`, JSON.stringify(currentNode.data || {}));
+      logger.info(`[CATEGORIES DEBUG] currentNode.metadata:`, JSON.stringify(currentNode.metadata || {}));
+      logger.info(`[CATEGORIES DEBUG] waitForResponse actual:`, currentNode.data?.waitForResponse);
+      
+      // Mapear a buttonsNode con opciones por defecto
+      const categoriesMessage = currentNode.data?.message || "Selecciona una categoría:";
+      
+      // Crear botones por defecto para categorías si no están definidos
+      const categoryButtons = currentNode.data?.options || [
+        { body: "Residencial" },
+        { body: "Comercial" },
+        { body: "Industrial" }
+      ];
+      
+      const categoriesOptions = { 
+        buttons: categoryButtons,
+        capture: true 
+      };
+      
+      logger.info(`[CATEGORIES DEBUG] opciones finales para addAnswer:`, JSON.stringify(categoriesOptions));
+      logger.info(`[CATEGORIES DEBUG] Llamando addAnswer con capture: true explícitamente`);
+      
+      flowChain = flowChain.addAnswer(categoriesMessage, categoriesOptions, async (ctx: any, { state, flowDynamic }: any) => {
+        logger.info(`[categoriesNode] Usuario seleccionó: ${ctx.body}`);
+        await state.update({ 
+          categories_selected: ctx.body,
+          category_name: ctx.body 
+        });
+        await flowDynamic(`✅ Has seleccionado: *${ctx.body}*`);
+      });
+      break;
+
+    case 'products':
+    case 'productsNode':
+    case 'products-node':
+      logger.info(`Procesando nodo products: ${nodeId}`);
+      logger.info(`[PRODUCTS DEBUG] currentNode.data:`, JSON.stringify(currentNode.data || {}));
+      logger.info(`[PRODUCTS DEBUG] currentNode.metadata:`, JSON.stringify(currentNode.metadata || {}));
+      logger.info(`[PRODUCTS DEBUG] waitForResponse actual:`, currentNode.data?.waitForResponse);
+      
+      // Mapear a buttonsNode con opciones por defecto
+      const productsMessage = currentNode.data?.message || "Selecciona un producto/servicio:";
+      
+      // Crear botones por defecto para productos si no están definidos
+      const productButtons = currentNode.data?.options || [
+        { body: "Venta de Propiedades" },
+        { body: "Alquiler de Propiedades" },
+        { body: "Asesoría Inmobiliaria" }
+      ];
+      
+      const productsOptions = { 
+        buttons: productButtons,
+        capture: true 
+      };
+      
+      logger.info(`[PRODUCTS DEBUG] opciones finales para addAnswer:`, JSON.stringify(productsOptions));
+      logger.info(`[PRODUCTS DEBUG] Llamando addAnswer con capture: true explícitamente`);
+      
+      flowChain = flowChain.addAnswer(productsMessage, productsOptions, async (ctx: any, { state, flowDynamic }: any) => {
+        logger.info(`[productsNode] Usuario seleccionó: ${ctx.body}`);
+        await state.update({ 
+          products_list: ctx.body,
+          servicio_seleccionado: ctx.body
+        });
+        await flowDynamic(`✅ Has seleccionado: *${ctx.body}*`);
+      });
+      break;
+
+    case 'check-availability':
+    case 'checkAvailabilityNode':
+    case 'check-availability-node':
+      logger.info(`Procesando nodo check-availability: ${nodeId}`);
+      // Mapear a messageNode con lógica de disponibilidad
+      const availabilityMessage = currentNode.data?.message || "🔍 Verificando disponibilidad...";
+      
+      flowChain = flowChain.addAnswer(availabilityMessage, null, async (ctx: any, { state, flowDynamic }: any) => {
+        // Simular verificación - por defecto no hay disponibilidad para seguir el flujo actual
+        await state.update({ availability: "not_available" });
+      });
+      break;
+
     case 'endNode':
     case 'end-node':
     case 'end':
