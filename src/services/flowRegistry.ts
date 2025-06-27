@@ -789,6 +789,9 @@ export async function processFlowMessage(
           buttons: []
         }));
         
+        // Capturar los mensajes antes de limpiar la cola
+        const capturedProviderMessages = [...provider.queuedMessages];
+        
         // Reemplazar variables en los mensajes
         for (const msg of webProviderMessages) {
           try {
@@ -911,6 +914,8 @@ export async function processFlowMessage(
         };
         
         logger.info(`[flowRegistry] Enviando ${webProviderMessages.length} msgs desde WebProvider (post-timeout)`);
+        
+        // IMPORTANTE: Saltarse las verificaciones posteriores ya que ya procesamos los mensajes
         return response;
       }
       
