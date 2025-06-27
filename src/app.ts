@@ -157,6 +157,7 @@ app.get("/api/debug", (req, res) => {
 // Registramos las APIs
 app.use("/api/voice", voiceRouter);
 app.use("/api/text", textRouter);
+app.use("/api/chat", textRouter); // Alias para compatibilidad
 app.use("/api/flows", flowsRouter);
 app.use("/api/templates", templatesRouter);
 app.use("/api/business", businessRouter); // Registramos la nueva API de business

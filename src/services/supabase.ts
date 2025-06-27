@@ -782,7 +782,7 @@ export const getTenantTemplatesWithFlows = async (
     // 1. Obtener todas las plantillas base publicadas desde chatbot_templates
     // Optimización: Sin retry y con timeout corto
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 segundos máximo
+    const timeoutId = setTimeout(() => controller.abort(), 45000); // 45 segundos máximo
     
     let publishedTemplates: any[] = [];
     let templateError: any = null;
@@ -947,7 +947,7 @@ export const getTemplateById = async (
 
     // Obtener la plantilla base por ID con los campos necesarios con timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 segundos timeout
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos timeout
     
     try {
       const { data, error } = await supabase

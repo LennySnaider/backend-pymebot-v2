@@ -507,8 +507,11 @@ async function handleChatRequest(req: AuthRequest, res: Response) {
     if (botResponse?.answer) {
       // Formato BuilderBot
       if (Array.isArray(botResponse.answer)) {
+        logger.info(`[text.ts] DEBUG: botResponse.answer es array con ${botResponse.answer.length} elementos:`, botResponse.answer);
         responseText = botResponse.answer.map(a => a.body || '').join('\n');
+        logger.info(`[text.ts] DEBUG: responseText concatenado: "${responseText}"`);
       } else if (typeof botResponse.answer === 'string') {
+        logger.info(`[text.ts] DEBUG: botResponse.answer es string: "${botResponse.answer}"`);
         responseText = botResponse.answer;
       }
       
