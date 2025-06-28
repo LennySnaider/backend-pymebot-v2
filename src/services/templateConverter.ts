@@ -20,6 +20,7 @@ import { enqueueMessage } from './buttonNavigationQueue';
 import { getSessionContext } from './sessionContext';
 import { processSalesFunnelActions } from './salesFunnelService';
 import { setSessionStage } from './flowRegistrySalesFix';
+import { getTenantCategories, getTenantProducts } from './categoriesService';
 
 // Store global para flujos creados
 const globalButtonFlows: Record<string, any> = {};
@@ -651,72 +652,76 @@ function buildFlowChain(
     case 'categoriesNode':
     case 'categories-node':
       logger.info(`Procesando nodo categories: ${nodeId}`);
-      logger.info(`[CATEGORIES DEBUG] currentNode.data:`, JSON.stringify(currentNode.data || {}));
-      logger.info(`[CATEGORIES DEBUG] currentNode.metadata:`, JSON.stringify(currentNode.metadata || {}));
-      logger.info(`[CATEGORIES DEBUG] waitForResponse actual:`, currentNode.data?.waitForResponse);
       
-      // Mapear a buttonsNode con opciones por defecto
-      const categoriesMessage = currentNode.data?.message || "Selecciona una categoría:";
+      const categoriesMessage = currentNode.data?.message || "Por favor selecciona una categoría:";
       
-      // Crear botones por defecto para categorías si no están definidos
-      const categoryButtons = currentNode.data?.options || [
-        { body: "Residencial" },
-        { body: "Comercial" },
-        { body: "Industrial" }
-      ];
-      
-      const categoriesOptions = { 
-        buttons: categoryButtons,
-        capture: true 
-      };
-      
-      logger.info(`[CATEGORIES DEBUG] opciones finales para addAnswer:`, JSON.stringify(categoriesOptions));
-      logger.info(`[CATEGORIES DEBUG] Llamando addAnswer con capture: true explícitamente`);
-      
-      flowChain = flowChain.addAnswer(categoriesMessage, categoriesOptions, async (ctx: any, { state, flowDynamic }: any) => {
-        logger.info(`[categoriesNode] Usuario seleccionó: ${ctx.body}`);
-        await state.update({ 
-          categories_selected: ctx.body,
-          category_name: ctx.body 
-        });
-        await flowDynamic(`✅ Has seleccionado: *${ctx.body}*`);
-      });
+      // Usar implementación simple sin async para evitar timeouts
+      flowChain = flowChain.addAnswer(
+        categoriesMessage + "\n\n• Residencial\n• Comercial\n• Industrial",
+        { capture: true }, 
+        async (ctx: any, { state }: any) => {
+          logger.info(`[categoriesNode] Usuario seleccionó: ${ctx.body}`);
+          
+          // Mapear respuesta del usuario a categoría válida
+          const userInput = ctx.body.toLowerCase();
+          let selectedCategory = '';
+          
+          if (userInput.includes('residencial') || userInput === '1') {
+            selectedCategory = 'Residencial';
+          } else if (userInput.includes('comercial') || userInput === '2') {
+            selectedCategory = 'Comercial';
+          } else if (userInput.includes('industrial') || userInput === '3') {
+            selectedCategory = 'Industrial';
+          } else {
+            selectedCategory = 'Residencial'; // Default
+          }
+          
+          await state.update({ 
+            categories_selected: selectedCategory,
+            category_name: selectedCategory 
+          });
+          
+          logger.info(`[categoriesNode] Categoría seleccionada: ${selectedCategory}`);
+        }
+      );
       break;
 
     case 'products':
     case 'productsNode':
     case 'products-node':
       logger.info(`Procesando nodo products: ${nodeId}`);
-      logger.info(`[PRODUCTS DEBUG] currentNode.data:`, JSON.stringify(currentNode.data || {}));
-      logger.info(`[PRODUCTS DEBUG] currentNode.metadata:`, JSON.stringify(currentNode.metadata || {}));
-      logger.info(`[PRODUCTS DEBUG] waitForResponse actual:`, currentNode.data?.waitForResponse);
       
-      // Mapear a buttonsNode con opciones por defecto
       const productsMessage = currentNode.data?.message || "Selecciona un producto/servicio:";
       
-      // Crear botones por defecto para productos si no están definidos
-      const productButtons = currentNode.data?.options || [
-        { body: "Venta de Propiedades" },
-        { body: "Alquiler de Propiedades" },
-        { body: "Asesoría Inmobiliaria" }
-      ];
-      
-      const productsOptions = { 
-        buttons: productButtons,
-        capture: true 
-      };
-      
-      logger.info(`[PRODUCTS DEBUG] opciones finales para addAnswer:`, JSON.stringify(productsOptions));
-      logger.info(`[PRODUCTS DEBUG] Llamando addAnswer con capture: true explícitamente`);
-      
-      flowChain = flowChain.addAnswer(productsMessage, productsOptions, async (ctx: any, { state, flowDynamic }: any) => {
-        logger.info(`[productsNode] Usuario seleccionó: ${ctx.body}`);
-        await state.update({ 
-          products_list: ctx.body,
-          servicio_seleccionado: ctx.body
-        });
-        await flowDynamic(`✅ Has seleccionado: *${ctx.body}*`);
-      });
+      // Usar implementación simple sin botones para evitar timeouts
+      flowChain = flowChain.addAnswer(
+        productsMessage + "\n\n• Venta de Propiedades\n• Alquiler de Propiedades\n• Asesoría Inmobiliaria",
+        { capture: true }, 
+        async (ctx: any, { state }: any) => {
+          logger.info(`[productsNode] Usuario seleccionó: ${ctx.body}`);
+          
+          // Mapear respuesta del usuario a producto válido
+          const userInput = ctx.body.toLowerCase();
+          let selectedProduct = '';
+          
+          if (userInput.includes('venta') || userInput === '1') {
+            selectedProduct = 'Venta de Propiedades';
+          } else if (userInput.includes('alquiler') || userInput === '2') {
+            selectedProduct = 'Alquiler de Propiedades';
+          } else if (userInput.includes('asesor') || userInput === '3') {
+            selectedProduct = 'Asesoría Inmobiliaria';
+          } else {
+            selectedProduct = 'Venta de Propiedades'; // Default
+          }
+          
+          await state.update({ 
+            products_list: selectedProduct,
+            servicio_seleccionado: selectedProduct
+          });
+          
+          logger.info(`[productsNode] Producto seleccionado: ${selectedProduct}`);
+        }
+      );
       break;
 
     case 'check-availability':
@@ -724,11 +729,26 @@ function buildFlowChain(
     case 'check-availability-node':
       logger.info(`Procesando nodo check-availability: ${nodeId}`);
       // Mapear a messageNode con lógica de disponibilidad
-      const availabilityMessage = currentNode.data?.message || "🔍 Verificando disponibilidad...";
+      const availabilityMessage = currentNode.data?.message || "🔍 Verificando disponibilidad...\n\n✅ ¡Excelente! Tenemos disponibilidad para el servicio seleccionado.";
       
       flowChain = flowChain.addAnswer(availabilityMessage, null, async (ctx: any, { state, flowDynamic }: any) => {
-        // Simular verificación - por defecto no hay disponibilidad para seguir el flujo actual
-        await state.update({ availability: "not_available" });
+        // Simular verificación exitosa
+        await state.update({ availability: "available" });
+        logger.info(`Check availability completado para: ${ctx.from}`);
+      });
+      break;
+
+    case 'book-appointment':
+    case 'bookAppointmentNode':
+    case 'book-appointment-node':
+      logger.info(`Procesando nodo book-appointment: ${nodeId}`);
+      // Mapear a messageNode con funcionalidad de agendamiento
+      const appointmentMessage = currentNode.data?.message || "📅 ¡Perfecto! Vamos a agendar tu cita.\n\n¿Qué fecha prefieres para tu cita?";
+      
+      flowChain = flowChain.addAnswer(appointmentMessage, { capture: true }, async (ctx: any, { state }: any) => {
+        // Capturar la fecha preferida
+        await state.update({ fecha_preferida: ctx.body });
+        logger.info(`Fecha preferida capturada: ${ctx.body}`);
       });
       break;
 
