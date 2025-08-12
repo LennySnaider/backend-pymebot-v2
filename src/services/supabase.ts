@@ -389,11 +389,18 @@ export const logMessage = async (
       `Registrando mensaje para tenant: ${messageToInsert.tenant_id}, bot: ${messageToInsert.bot_id}, session: ${messageToInsert.session_id}, user: ${messageToInsert.user_id}`
     );
 
+    // Añadir timeout para evitar colgados
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 segundos máximo
+    
     const { data, error } = await supabase
       .from("messages") // Asegúrate que la tabla se llame 'messages'
       .insert(messageToInsert)
       .select("id")
-      .single();
+      .single()
+      .abortSignal(controller.signal);
+      
+    clearTimeout(timeoutId);
 
     if (error) {
       logger.error("Error al registrar mensaje:", {
@@ -782,7 +789,7 @@ export const getTenantTemplatesWithFlows = async (
     // 1. Obtener todas las plantillas base publicadas desde chatbot_templates
     // Optimización: Sin retry y con timeout corto
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000); // 45 segundos máximo
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 segundos máximo
     
     let publishedTemplates: any[] = [];
     let templateError: any = null;
@@ -1168,7 +1175,10 @@ export const createNewConversation = async (
   try {
     const supabase = getSupabaseAdminClient();
     
-    // Crear o actualizar usuario
+    // Crear o actualizar usuario con timeout
+    const userController = new AbortController();
+    const userTimeoutId = setTimeout(() => userController.abort(), 15000);
+    
     const { data: userData, error: userError } = await supabase
       .from("tenant_users")
       .upsert({
@@ -1181,14 +1191,20 @@ export const createNewConversation = async (
         ignoreDuplicates: false
       })
       .select("id")
-      .single();
+      .single()
+      .abortSignal(userController.signal);
+      
+    clearTimeout(userTimeoutId);
 
     if (userError) {
       logger.error("Error creando/actualizando usuario:", userError);
       return null;
     }
 
-    // Crear nueva conversación
+    // Crear nueva conversación con timeout
+    const convController = new AbortController();
+    const convTimeoutId = setTimeout(() => convController.abort(), 15000);
+    
     const { data: conversationData, error: convError } = await supabase
       .from("conversations")
       .insert({
@@ -1199,7 +1215,10 @@ export const createNewConversation = async (
         last_message_at: new Date().toISOString()
       })
       .select("id")
-      .single();
+      .single()
+      .abortSignal(convController.signal);
+      
+    clearTimeout(convTimeoutId);
 
     if (convError) {
       logger.error("Error creando conversación:", convError);

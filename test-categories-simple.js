@@ -1,4 +1,4 @@
-const fetch = require('node-fetch');
+import fetch from 'node-fetch';
 
 // Test simple del flujo de categorías + productos
 async function testCategoriesFlow() {
@@ -16,7 +16,7 @@ async function testCategoriesFlow() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        message: 'hola',
+        text: 'hola',
         session_id: sessionId,
         user_id: userId,
         tenant_id: tenantId
@@ -32,7 +32,7 @@ async function testCategoriesFlow() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        message: 'Juan Pérez',
+        text: 'Juan Pérez',
         session_id: sessionId,
         user_id: userId,
         tenant_id: tenantId
@@ -48,7 +48,7 @@ async function testCategoriesFlow() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        message: '555-1234',
+        text: '555-1234',
         session_id: sessionId,
         user_id: userId,
         tenant_id: tenantId
@@ -64,7 +64,7 @@ async function testCategoriesFlow() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        message: '1',
+        text: '1',
         session_id: sessionId,
         user_id: userId,
         tenant_id: tenantId
@@ -80,7 +80,7 @@ async function testCategoriesFlow() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        message: '1',
+        text: '1',
         session_id: sessionId,
         user_id: userId,
         tenant_id: tenantId

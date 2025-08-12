@@ -9,6 +9,7 @@
 
 import { createProvider, ProviderClass } from "@builderbot/bot";
 import { BaileysProvider } from "@builderbot/provider-baileys";
+import { TwilioProvider } from "@builderbot/provider-twilio";
 import { config } from "../config";
 import logger from "../utils/logger";
 import path from "path";
@@ -16,7 +17,7 @@ import fs from "fs";
 import qrImage from "qr-image"; // Importamos qr-image para generar el QR manualmente
 
 // Tipos de proveedores soportados
-export type WhatsAppProviderType = "baileys" | "meta";
+export type WhatsAppProviderType = "baileys" | "meta" | "twilio";
 
 // Opciones para inicializar el proveedor
 export interface WhatsAppProviderOptions {
@@ -123,6 +124,34 @@ export const initWhatsAppProvider = async (
         });
       }
 
+      return activeProvider;
+    }
+
+    // Twilio provider
+    else if (providerType === "twilio") {
+      logger.info("Configurando proveedor Twilio para WhatsApp");
+      
+      // Debug de variables de entorno
+      logger.info(`TWILIO_ACCOUNT_SID: ${process.env.TWILIO_ACCOUNT_SID ? 'SET' : 'NOT SET'}`);
+      logger.info(`TWILIO_AUTH_TOKEN: ${process.env.TWILIO_AUTH_TOKEN ? 'SET' : 'NOT SET'}`);
+      logger.info(`TWILIO_PHONE_NUMBER: ${process.env.TWILIO_PHONE_NUMBER ? process.env.TWILIO_PHONE_NUMBER : 'NOT SET'}`);
+      
+      if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_PHONE_NUMBER) {
+        throw new Error("Faltan credenciales de Twilio en las variables de entorno");
+      }
+      
+      // Para Twilio, necesitamos pasar el número sin el prefijo 'whatsapp:'
+      const twilioNumber = process.env.TWILIO_PHONE_NUMBER?.replace('whatsapp:', '') || '';
+      
+      activeProvider = createProvider(TwilioProvider, {
+        accountSid: process.env.TWILIO_ACCOUNT_SID,
+        authToken: process.env.TWILIO_AUTH_TOKEN,
+        phoneNumber: twilioNumber,
+        publicUrl: process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 3090}`,
+      });
+
+      activeProviderType = "twilio";
+      logger.info("Proveedor Twilio configurado exitosamente");
       return activeProvider;
     }
 

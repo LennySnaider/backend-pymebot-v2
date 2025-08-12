@@ -4,18 +4,29 @@
  * Proveedor para comunicación vía API web.
  * Permite integrar Builderbot con aplicaciones web o móviles.
  * Soporta configuración de plantillas y personalización de comportamiento.
- * @version 1.1.0
- * @updated 2025-04-26
+ * 
+ * ACTUALIZACIÓN V2: Integración con ImprovedSessionManager
+ * - Soporte para sesiones persistentes
+ * - Cache inteligente de contexto
+ * - Preservación de estado entre requests
+ * - Optimización para arquitectura multi-tenant
+ * 
+ * @version 2.0.0
+ * @updated 2025-06-26
  */
 
 import { ProviderClass } from "@builderbot/bot";
 import { EventEmitter } from "events";
 import { config } from "../config";
 import logger from "../utils/logger";
+import ImprovedSessionManager from "../services/improvedSessionManager";
+import type { PersistentSession, SessionContextData } from "../services/improvedSessionManager";
 
 /**
  * Proveedor personalizado para comunicación vía API web
  * Intercepta mensajes y los maneja sin enviarlos por WhatsApp
+ * 
+ * INTEGRACIÓN V2: Usa ImprovedSessionManager para persistencia
  */
 export class WebProvider extends ProviderClass {
   declare vendor: EventEmitter;
@@ -25,15 +36,21 @@ export class WebProvider extends ProviderClass {
   queuedMessages: string[] = []; // Para capturar todos los mensajes
   userId: string;
   tenantId: string;
-  sessionId?: string;  // Añadir propiedad para sessionId
+  sessionId?: string;  // ID de sesión persistente
   templateConfig: Record<string, any> | null = null;
   messageMetadata: Record<string, any> = {};
+  
+  // NUEVAS PROPIEDADES V2: GESTIÓN DE SESIONES PERSISTENTES
+  private sessionManager: ImprovedSessionManager;
+  private currentSession: PersistentSession | null = null;
+  private contextData: SessionContextData | null = null;
+  private sessionInitialized: boolean = false;
 
   /**
-   * Constructor del proveedor web
+   * Constructor del proveedor web con gestión de sesiones persistentes
    * @param userId ID del usuario
    * @param tenantId ID del tenant
-   * @param sessionId ID de la sesión (opcional)
+   * @param sessionId ID de la sesión (opcional, se genera/recupera automáticamente)
    */
   constructor(userId: string, tenantId: string, sessionId?: string) {
     super();
@@ -41,7 +58,201 @@ export class WebProvider extends ProviderClass {
     this.tenantId = tenantId;
     this.sessionId = sessionId;
     this.vendor = new EventEmitter();
-    logger.info(`WebProvider inicializado para usuario ${userId} de tenant ${tenantId}${sessionId ? ` con sesión ${sessionId}` : ''}`);
+    
+    // Inicializar gestión de sesiones persistentes
+    this.sessionManager = ImprovedSessionManager.getInstance();
+    
+    logger.info(`WebProvider V2 inicializado para usuario ${userId} de tenant ${tenantId}${sessionId ? ` con sesión ${sessionId}` : ' (sesión auto-gestionada)'}`);
+    
+    // Inicializar sesión persistente de forma asíncrona (no bloquear constructor)
+    this.initializePersistentSession().catch(error => {
+      logger.error(`[WebProvider] Error inicializando sesión persistente:`, error);
+    });
+  }
+
+  /**
+   * MÉTODO V2: Inicializar sesión persistente
+   * Obtiene o crea una sesión persistente para el usuario/tenant
+   */
+  private async initializePersistentSession(): Promise<void> {
+    try {
+      logger.info(`[WebProvider] Inicializando sesión persistente para ${this.userId}@${this.tenantId}`);
+      
+      // Obtener o crear sesión persistente
+      this.currentSession = await this.sessionManager.getOrCreateSession(
+        this.userId,
+        this.tenantId,
+        {
+          platform: 'web',
+          priority: 'normal',
+          forceNew: false, // Reutilizar sesión existente si está disponible
+          metadata: {
+            userAgent: 'WebProvider-V2',
+            tags: ['web_provider', 'persistent_session']
+          }
+        }
+      );
+
+      // Actualizar sessionId si no estaba definido
+      if (!this.sessionId) {
+        this.sessionId = this.currentSession.sessionId;
+      }
+
+      // Cargar contexto de sesión
+      this.contextData = await this.sessionManager.getSessionContext(this.currentSession.sessionId);
+      
+      this.sessionInitialized = true;
+      logger.info(`[WebProvider] Sesión persistente inicializada: ${this.currentSession.sessionId}`);
+      
+    } catch (error) {
+      logger.error(`[WebProvider] Error inicializando sesión persistente:`, error);
+      // Continuar sin sesión persistente (fallback al comportamiento original)
+      this.sessionInitialized = false;
+    }
+  }
+
+  /**
+   * MÉTODO V2: Asegurar que la sesión esté inicializada
+   * Espera hasta que la sesión persistente esté lista
+   */
+  private async ensureSessionInitialized(): Promise<void> {
+    if (this.sessionInitialized && this.currentSession) {
+      return;
+    }
+
+    // Esperar hasta que la sesión esté inicializada (con timeout)
+    let attempts = 0;
+    const maxAttempts = 50; // 5 segundos máximo
+    
+    while (!this.sessionInitialized && attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      attempts++;
+    }
+
+    if (!this.sessionInitialized) {
+      logger.warn(`[WebProvider] Timeout esperando inicialización de sesión, continuando sin persistencia`);
+    }
+  }
+
+  /**
+   * MÉTODO V2: Actualizar contexto de sesión
+   * Preserva el estado entre requests
+   */
+  private async updateSessionContext(contextUpdates: Partial<SessionContextData>): Promise<void> {
+    if (!this.currentSession || !this.sessionInitialized) {
+      return;
+    }
+
+    try {
+      // Actualizar contexto local
+      if (this.contextData) {
+        this.contextData = {
+          ...this.contextData,
+          ...contextUpdates
+        };
+      }
+
+      // Persistir cambios
+      await this.sessionManager.updateSessionContext(
+        this.currentSession.sessionId,
+        contextUpdates
+      );
+
+      // Actualizar actividad de sesión
+      await this.sessionManager.updateSessionActivity(this.currentSession.sessionId, {
+        lastActivityAt: new Date().toISOString(),
+        contextData: this.contextData
+      });
+
+      logger.debug(`[WebProvider] Contexto de sesión actualizado para ${this.currentSession.sessionId}`);
+      
+    } catch (error) {
+      logger.error(`[WebProvider] Error actualizando contexto de sesión:`, error);
+    }
+  }
+
+  /**
+   * MÉTODO V2: Obtener contexto preservado de sesión
+   * Recupera datos persistidos entre requests
+   */
+  async getPreservedContext(): Promise<SessionContextData | null> {
+    await this.ensureSessionInitialized();
+    
+    if (!this.currentSession) {
+      return null;
+    }
+
+    return this.contextData;
+  }
+
+  /**
+   * MÉTODO V2: Preservar datos de conversación
+   * Guarda información importante para mantener contexto
+   */
+  async preserveConversationData(data: {
+    message?: string;
+    response?: string;
+    nodeId?: string;
+    flowType?: string;
+    collectedData?: Record<string, any>;
+  }): Promise<void> {
+    if (!this.currentSession) {
+      return;
+    }
+
+    const contextUpdates: Partial<SessionContextData> = {};
+
+    // Agregar mensaje a historial de conversación
+    if (data.message || data.response) {
+      const conversationEntry = {
+        messageId: `msg_${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        type: data.message ? 'user' : 'bot' as 'user' | 'bot',
+        content: data.message || data.response || '',
+        nodeId: data.nodeId
+      };
+
+      if (!this.contextData?.conversationHistory) {
+        contextUpdates.conversationHistory = [conversationEntry];
+      } else {
+        contextUpdates.conversationHistory = [
+          ...this.contextData.conversationHistory,
+          conversationEntry
+        ];
+      }
+    }
+
+    // Actualizar datos recolectados
+    if (data.collectedData) {
+      contextUpdates.collectedData = {
+        ...(this.contextData?.collectedData || {}),
+        ...data.collectedData
+      };
+    }
+
+    // Actualizar navegación de flujo
+    if (data.nodeId && data.flowType) {
+      const flowEntry = {
+        timestamp: new Date().toISOString(),
+        fromNodeId: this.contextData?.currentNodeId,
+        toNodeId: data.nodeId,
+        flowType: data.flowType,
+        success: true
+      };
+
+      if (!this.contextData?.flowHistory) {
+        contextUpdates.flowHistory = [flowEntry];
+      } else {
+        contextUpdates.flowHistory = [
+          ...this.contextData.flowHistory,
+          flowEntry
+        ];
+      }
+
+      contextUpdates.currentNodeId = data.nodeId;
+    }
+
+    await this.updateSessionContext(contextUpdates);
   }
 
   /**
@@ -199,54 +410,110 @@ export class WebProvider extends ProviderClass {
   }
 
   /**
-   * Envía un mensaje simulado al bot para procesamiento
+   * Envía un mensaje simulado al bot para procesamiento con sesiones persistentes
    * @param message Mensaje a procesar
    * @returns Respuesta del bot
    */
   async handleIncomingMessage(message: string): Promise<string> {
-    logger.info(`[WebProvider] handleIncomingMessage: "${message}"`);
+    logger.info(`[WebProvider V2] handleIncomingMessage: "${message}"`);
     
-    // Reseteamos el estado
+    // PASO 1: Asegurar que la sesión persistente esté inicializada
+    await this.ensureSessionInitialized();
+    
+    // PASO 2: Preservar mensaje de entrada en contexto de sesión
+    await this.preserveConversationData({
+      message,
+      nodeId: this.contextData?.currentNodeId,
+      flowType: 'incoming_message'
+    });
+
+    // PASO 3: Reseteamos el estado local para capturar nueva respuesta
     this.queueMessage = null;
     this.queuedMessages = [];
     this.messageMetadata = {};
 
-    // Si tenemos configuración de plantilla, la añadimos al contexto
-    const additionalContext = this.templateConfig ? { templateConfig: this.templateConfig } : undefined;
+    // PASO 4: Preparar contexto enriquecido para el mensaje
+    const enrichedContext = {
+      // Contexto original
+      templateConfig: this.templateConfig,
+      
+      // NUEVO: Contexto de sesión persistente
+      sessionId: this.sessionId,
+      persistentSession: this.currentSession,
+      preservedContext: this.contextData,
+      
+      // Datos históricos de la conversación
+      conversationHistory: this.contextData?.conversationHistory || [],
+      collectedData: this.contextData?.collectedData || {},
+      currentNodeId: this.contextData?.currentNodeId,
+      
+      // Metadatos de sesión
+      sessionMetadata: {
+        userId: this.userId,
+        tenantId: this.tenantId,
+        platform: 'web',
+        sessionInitialized: this.sessionInitialized
+      }
+    };
 
-    // Emitimos un evento simulado de mensaje con contexto adicional
+    // PASO 5: Emitir evento con contexto enriquecido
     this.emit("message", {
       from: this.userId,
       body: message,
-      // Añadimos datos de contexto para que flow pueda usarlos
-      // Usamos metadatos para no interferir con la estructura core
-      _metadata: additionalContext
+      // CRUCIAL: Contexto enriquecido para que los flows puedan usar datos persistentes
+      _metadata: enrichedContext,
+      // NUEVO: ID de sesión para tracking
+      _sessionId: this.sessionId
     });
 
-    // Esperamos hasta que tengamos respuesta (con timeout)
+    // PASO 6: Esperar respuesta con timeout mejorado
     let attempts = 0;
-    while (this.queuedMessages.length === 0 && attempts < 50) {
+    const maxAttempts = 50; // 5 segundos
+    
+    while (this.queuedMessages.length === 0 && attempts < maxAttempts) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       attempts++;
     }
 
-    logger.info(`[WebProvider] Mensajes capturados: ${this.queuedMessages.length}`);
-    logger.info(`[WebProvider] Mensajes: ${JSON.stringify(this.queuedMessages)}`);
+    logger.info(`[WebProvider V2] Mensajes capturados: ${this.queuedMessages.length}`);
+    logger.info(`[WebProvider V2] Mensajes: ${JSON.stringify(this.queuedMessages)}`);
 
+    // PASO 7: Procesar respuesta obtenida
+    let finalResponse: string;
+    
     if (this.queuedMessages.length === 0) {
-      return "Lo siento, no he podido procesar tu mensaje en este momento.";
+      finalResponse = "Lo siento, no he podido procesar tu mensaje en este momento.";
+      logger.warn(`[WebProvider V2] No se capturaron mensajes para usuario ${this.userId}`);
+    } else {
+      // Concatenar todas las respuestas
+      finalResponse = this.queuedMessages.join('\n');
     }
 
-    // Concatenar todas las respuestas
-    return this.queuedMessages.join('\n');
+    // PASO 8: Preservar respuesta en contexto de sesión
+    await this.preserveConversationData({
+      response: finalResponse,
+      nodeId: this.contextData?.currentNodeId,
+      flowType: 'bot_response'
+    });
+
+    logger.info(`[WebProvider V2] Respuesta final para ${this.userId}: "${finalResponse}"`);
+    
+    return finalResponse;
   }
 
   /**
-   * Obtiene metadatos del último mensaje procesado
-   * @returns Objeto con metadatos (tokens, etc.)
+   * Obtiene metadatos del último mensaje procesado (MEJORADO V2)
+   * @returns Objeto con metadatos (tokens, sesión, etc.)
    */
   getMessageMetadata(): Record<string, any> {
-    return { ...this.messageMetadata };
+    return { 
+      ...this.messageMetadata,
+      // NUEVO V2: Información de sesión
+      sessionId: this.sessionId,
+      sessionInitialized: this.sessionInitialized,
+      hasPersistedContext: !!this.contextData,
+      conversationLength: this.contextData?.conversationHistory?.length || 0
+    };
   }
 
   /**
@@ -294,27 +561,178 @@ export class WebProvider extends ProviderClass {
   }
 
   /**
-   * Cierra la conexión del proveedor
+   * MÉTODO V2: Obtener información completa de sesión
+   * Permite acceso a toda la información de sesión persistente
+   */
+  async getSessionInfo(): Promise<{
+    sessionId?: string;
+    userId: string;
+    tenantId: string;
+    initialized: boolean;
+    contextData: SessionContextData | null;
+    conversationLength: number;
+    lastActivity?: string;
+  }> {
+    await this.ensureSessionInitialized();
+    
+    return {
+      sessionId: this.sessionId,
+      userId: this.userId,
+      tenantId: this.tenantId,
+      initialized: this.sessionInitialized,
+      contextData: this.contextData,
+      conversationLength: this.contextData?.conversationHistory?.length || 0,
+      lastActivity: this.currentSession?.lastActivityAt
+    };
+  }
+
+  /**
+   * MÉTODO V2: Forzar creación de nueva sesión
+   * Útil para reiniciar conversación desde cero
+   */
+  async createNewSession(): Promise<string | null> {
+    try {
+      // Terminar sesión actual si existe
+      if (this.currentSession) {
+        await this.sessionManager.endSession(this.currentSession.sessionId, 'user_reset');
+      }
+
+      // Crear nueva sesión
+      this.currentSession = await this.sessionManager.getOrCreateSession(
+        this.userId,
+        this.tenantId,
+        {
+          platform: 'web',
+          priority: 'normal',
+          forceNew: true, // Forzar nueva sesión
+          metadata: {
+            userAgent: 'WebProvider-V2-Reset',
+            tags: ['web_provider', 'new_session', 'user_reset']
+          }
+        }
+      );
+
+      this.sessionId = this.currentSession.sessionId;
+      this.contextData = await this.sessionManager.getSessionContext(this.currentSession.sessionId);
+      this.sessionInitialized = true;
+
+      logger.info(`[WebProvider V2] Nueva sesión creada: ${this.sessionId}`);
+      return this.sessionId;
+      
+    } catch (error) {
+      logger.error(`[WebProvider V2] Error creando nueva sesión:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * MÉTODO V2: Limpiar contexto de sesión
+   * Mantiene la sesión pero limpia el historial
+   */
+  async clearSessionContext(): Promise<void> {
+    if (!this.currentSession) {
+      return;
+    }
+
+    const clearedContext: Partial<SessionContextData> = {
+      collectedData: {},
+      conversationHistory: [],
+      flowHistory: [],
+      temporaryData: {},
+      currentNodeId: undefined
+    };
+
+    await this.updateSessionContext(clearedContext);
+    logger.info(`[WebProvider V2] Contexto de sesión limpiado para ${this.sessionId}`);
+  }
+
+  /**
+   * Cierra la conexión del proveedor (MEJORADO V2)
+   * Preserva sesión para futuras conexiones
    */
   async close() {
-    logger.info(`[WebProvider] Cerrando conexión para ${this.userId}`);
+    logger.info(`[WebProvider V2] Cerrando conexión para ${this.userId}`);
+    
+    // NUEVO V2: Actualizar sesión antes de cerrar
+    if (this.currentSession && this.sessionInitialized) {
+      try {
+        await this.sessionManager.updateSessionActivity(this.currentSession.sessionId, {
+          lastActivityAt: new Date().toISOString(),
+          metadata: {
+            ...this.currentSession.metadata,
+            tags: [...(this.currentSession.metadata.tags || []), 'connection_closed']
+          }
+        });
+        
+        logger.info(`[WebProvider V2] Sesión ${this.sessionId} actualizada antes del cierre`);
+      } catch (error) {
+        logger.error(`[WebProvider V2] Error actualizando sesión al cerrar:`, error);
+      }
+    }
+    
+    // Limpiar referencias locales pero NO terminar la sesión persistente
+    this.currentSession = null;
+    this.contextData = null;
+    this.sessionInitialized = false;
+    
     return true;
   }
 }
 
 /**
- * Crea una instancia del proveedor web
+ * Crea una instancia del proveedor web con sesiones persistentes V2
  * @param userId ID del usuario
  * @param tenantId ID del tenant
- * @param sessionId ID de la sesión (opcional)
- * @returns Instancia del proveedor web
+ * @param sessionId ID de la sesión (opcional, se auto-gestiona)
+ * @returns Instancia del proveedor web con soporte para sesiones persistentes
  */
 export const createWebProvider = (
   userId: string,
   tenantId: string = config.multitenant.defaultTenant,
   sessionId?: string
 ): WebProvider => {
-  return new WebProvider(userId, tenantId, sessionId);
+  const provider = new WebProvider(userId, tenantId, sessionId);
+  
+  logger.info(`[createWebProvider V2] Proveedor creado para ${userId}@${tenantId} con gestión de sesiones persistentes`);
+  
+  return provider;
+};
+
+/**
+ * NUEVA FUNCIÓN V2: Crear proveedor con sesión específica
+ * Útil para recuperar una sesión existente específica
+ */
+export const createWebProviderWithSession = async (
+  userId: string,
+  tenantId: string,
+  sessionId: string
+): Promise<WebProvider> => {
+  const provider = new WebProvider(userId, tenantId, sessionId);
+  
+  // Esperar a que la sesión se inicialice
+  await provider.getSessionInfo();
+  
+  logger.info(`[createWebProviderWithSession V2] Proveedor creado con sesión específica ${sessionId}`);
+  
+  return provider;
+};
+
+/**
+ * NUEVA FUNCIÓN V2: Crear proveedor con nueva sesión forzada
+ * Útil para conversaciones completamente nuevas
+ */
+export const createWebProviderNewSession = async (
+  userId: string,
+  tenantId: string
+): Promise<WebProvider> => {
+  const provider = new WebProvider(userId, tenantId);
+  
+  // Forzar creación de nueva sesión
+  await provider.createNewSession();
+  
+  logger.info(`[createWebProviderNewSession V2] Proveedor creado con nueva sesión para ${userId}@${tenantId}`);
+  
+  return provider;
 };
 
 export default WebProvider;

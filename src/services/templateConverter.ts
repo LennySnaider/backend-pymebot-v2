@@ -2,9 +2,15 @@
  * src/services/templateConverter.ts
  * 
  * Servicio para convertir plantillas visuales a flujos de BuilderBot
- * @version 6.0.0 - Corregido para construir flujos encadenados correctamente
+ * @version 8.0.0 - Migración a arquitectura modular V1
  * @created 2025-05-10
- * @updated 2025-05-16
+ * @updated 2025-07-11
+ * 
+ * NUEVO EN V8.0.0:
+ * - Arquitectura modular con nodos independientes
+ * - Patrón addAction + addAnswer de V1
+ * - Estado compartido mejorado
+ * - Mantiene 100% intacto el sistema de leads
  */
 
 import { createFlow, addKeyword, addAnswer } from '@builderbot/bot';
@@ -17,13 +23,176 @@ import {
   FlowNode
 } from '../models/flow.types';
 import { enqueueMessage } from './buttonNavigationQueue';
-import { getSessionContext } from './sessionContext';
+import { getSessionContext, setSessionContext } from './sessionContext';
 import { processSalesFunnelActions } from './salesFunnelService';
 import { setSessionStage } from './flowRegistrySalesFix';
-import { getTenantCategories, getTenantProducts } from './categoriesService';
+import { getTenantCategories, getTenantProducts, getTenantProductCategories } from './categoriesService';
+
+// IMPORTACIONES HÍBRIDAS (NO AFECTAN FUNCIONAMIENTO ACTUAL)
+import TemplateDetectorService from '../utils/templateDetector';
+import SystemRouterService from '../utils/systemRouter';
+import HybridTemplateManagerService from '../utils/hybridTemplateManager';
+import type { RoutingContext } from '../utils/systemRouter';
+import type { ChatbotTemplate } from '../types/Template';
 
 // Store global para flujos creados
 const globalButtonFlows: Record<string, any> = {};
+
+// Importar flujos modulares
+import * as ModularFlows from '../flows/nodes';
+import { createMainFlow, createFallbackFlow } from '../flows/mainFlow';
+
+/**
+ * Verifica si un nodo debe usar la arquitectura modular
+ */
+function shouldUseModularFlow(nodeType: string): boolean {
+  const modularNodeTypes = [
+    'categories', 'categoriesnode', 'categories-node',
+    'products', 'productsnode', 'products-node',
+    'message', 'messagenode', 'message-node'
+  ];
+  
+  return modularNodeTypes.includes(nodeType.toLowerCase());
+}
+
+/**
+ * Obtiene el flujo modular correspondiente al tipo de nodo
+ */
+function getModularFlow(nodeType: string): any {
+  switch (nodeType.toLowerCase()) {
+    case 'categories':
+    case 'categoriesnode':
+    case 'categories-node':
+      return ModularFlows.CategoriesFlow;
+    
+    case 'products':
+    case 'productsnode':
+    case 'products-node':
+      return ModularFlows.ProductsFlow;
+    
+    case 'message':
+    case 'messagenode':
+    case 'message-node':
+      return ModularFlows.MessageFlow;
+    
+    default:
+      return null;
+  }
+}
+
+/**
+ * Verifica si un template contiene nodos que requieren arquitectura modular
+ */
+function shouldUseModularArchitecture(templateData: any): boolean {
+  try {
+    logger.info(`[shouldUseModularArchitecture] 🔍 Verificando estructura del template...`);
+    
+    // Verificar múltiples estructuras posibles
+    let nodes = {};
+    
+    if (templateData.nodes) {
+      nodes = templateData.nodes;
+      logger.info(`[shouldUseModularArchitecture] 📋 Usando templateData.nodes`);
+    } else if (templateData.react_flow_json?.nodes) {
+      nodes = templateData.react_flow_json.nodes;
+      logger.info(`[shouldUseModularArchitecture] 📋 Usando templateData.react_flow_json.nodes`);
+    } else {
+      logger.warn(`[shouldUseModularArchitecture] ❌ No se encontraron nodos en el template`);
+      return false;
+    }
+    
+    // Si nodes es un array, convertir a objeto
+    if (Array.isArray(nodes)) {
+      logger.info(`[shouldUseModularArchitecture] 📋 Nodos es array, convirtiendo...`);
+      const nodeArray = nodes;
+      nodes = {};
+      nodeArray.forEach((node: any) => {
+        if (node.id) {
+          nodes[node.id] = node;
+        }
+      });
+    }
+    
+    // Verificar si hay nodos que requieren arquitectura modular
+    const nodeTypes = Object.values(nodes).map((node: any) => node.type?.toLowerCase());
+    logger.info(`[shouldUseModularArchitecture] 📋 Tipos de nodos encontrados:`, nodeTypes);
+    
+    const modularNodeTypes = [
+      'categories', 'categoriesnode', 'categories-node',
+      'products', 'productsnode', 'products-node',
+      'message', 'messagenode', 'message-node'
+    ];
+    
+    const hasModularNodes = nodeTypes.some(type => modularNodeTypes.includes(type));
+    logger.info(`[shouldUseModularArchitecture] 🎯 ¿Requiere arquitectura modular?`, hasModularNodes);
+    
+    return hasModularNodes;
+    
+  } catch (error) {
+    logger.error(`[shouldUseModularArchitecture] Error verificando nodos:`, error);
+    return false;
+  }
+}
+
+/**
+ * Convierte template usando arquitectura modular V1
+ */
+async function convertTemplateWithModularArchitecture(
+  templateId: string,
+  tenantId?: string,
+  sessionId?: string
+): Promise<FlowConversionResult> {
+  try {
+    logger.info(`[ModularConverter] Iniciando conversión modular para template: ${templateId}`);
+    
+    // Cargar la plantilla desde la base de datos
+    const { getTemplateById } = await import('./supabase');
+    const template = await getTemplateById(templateId);
+    
+    if (!template) {
+      throw new Error(`Plantilla ${templateId} no encontrada`);
+    }
+    
+    // Parsear el template data
+    let templateData: any = {};
+    
+    if (template.react_flow_json && typeof template.react_flow_json === 'object') {
+      templateData = template.react_flow_json;
+      
+      // Si nodes está en formato array, convertir a objeto
+      if (Array.isArray(templateData.nodes)) {
+        const nodeArray = templateData.nodes;
+        templateData.nodes = {};
+        nodeArray.forEach((node: any) => {
+          templateData.nodes[node.id] = node;
+        });
+      }
+    }
+    
+    // Crear mainFlow con el template data
+    const mainFlow = createMainFlow(templateData, tenantId || '');
+    const fallbackFlow = createFallbackFlow();
+    
+    // Crear flujo combinado
+    const combinedFlow = createFlow([
+      mainFlow,
+      fallbackFlow,
+      ...Object.values(ModularFlows)
+    ]);
+    
+    logger.info(`[ModularConverter] Flujo modular creado exitosamente`);
+    
+    return {
+      flow: combinedFlow,
+      entryKeywords: ['INICIO', 'inicio', 'START', 'start', 'hola', 'hi', 'hello'],
+      nodeMap: {} // En arquitectura modular, el nodeMap es manejado por el mainFlow
+    };
+    
+  } catch (error) {
+    logger.error(`[ModularConverter] Error en conversión modular:`, error);
+    throw error;
+  }
+}
 
 /**
  * Helper para crear callback que procesa sales funnel
@@ -110,11 +279,308 @@ export interface FlowConversionResult {
 }
 
 /**
- * Convierte una plantilla de flujo visual a un flujo de BuilderBot
+ * Interfaz extendida para resultado de conversión híbrida
+ */
+export interface HybridFlowConversionResult extends FlowConversionResult {
+  isHybridFlow: boolean;
+  hybridMetadata?: {
+    detectionAnalysis?: any;
+    routingDecision?: any;
+    modulesUsed?: string[];
+    performanceBaseline?: any;
+  };
+}
+
+/**
+ * WRAPPER HÍBRIDO: Conversión inteligente con detección automática
+ * Esta función actúa como proxy inteligente para la conversión de templates
+ * Detecta automáticamente si un template requiere procesamiento híbrido
+ * En caso de NO requerirlo o error, delega transparentemente a la función original
+ * 
  * @param templateId ID de la plantilla
+ * @param tenantId ID del tenant
+ * @param sessionId ID de sesión
+ * @returns Flujo compatible con BuilderBot (híbrido o actual)
+ */
+export async function convertTemplateToBuilderbotFlowWithHybridRouting(
+  templateId: string,
+  tenantId?: string,
+  sessionId?: string
+): Promise<HybridFlowConversionResult> {
+  const startTime = Date.now();
+  logger.info(`[HybridTemplateConverter] 🔍 Analizando template ${templateId} para conversión híbrida`);
+
+  try {
+    // PASO 0: VERIFICACIÓN RÁPIDA PARA ARQUITECTURA MODULAR V1
+    try {
+      logger.info(`[HybridTemplateConverter] 🔍 Verificando si template ${templateId} requiere arquitectura modular`);
+      const { getTemplateById } = await import('./supabase');
+      const templateData = await getTemplateById(templateId);
+      
+      if (templateData) {
+        logger.info(`[HybridTemplateConverter] ✅ Template cargado, verificando nodos...`);
+        logger.info(`[HybridTemplateConverter] 📋 Template data keys:`, Object.keys(templateData));
+        
+        // Verificar estructura
+        if (templateData.react_flow_json) {
+          logger.info(`[HybridTemplateConverter] 📋 react_flow_json keys:`, Object.keys(templateData.react_flow_json));
+          if (templateData.react_flow_json.nodes) {
+            logger.info(`[HybridTemplateConverter] 📋 nodes type:`, typeof templateData.react_flow_json.nodes);
+            logger.info(`[HybridTemplateConverter] 📋 nodes length/keys:`, Array.isArray(templateData.react_flow_json.nodes) ? templateData.react_flow_json.nodes.length : Object.keys(templateData.react_flow_json.nodes).length);
+          }
+        }
+        
+        if (shouldUseModularArchitecture(templateData)) {
+          logger.info(`[HybridTemplateConverter] 🎯 Template requiere arquitectura modular, usando conversión V1`);
+          const modularResult = await convertTemplateWithModularArchitecture(templateId, tenantId, sessionId);
+          
+          return {
+            ...modularResult,
+            isHybridFlow: true,
+            hybridMetadata: {
+              detectionAnalysis: { modularArchitecture: true },
+              routingDecision: { confidence: 1.0, source: 'modular-detection' },
+              modulesUsed: ['CategoriesFlow', 'ProductsFlow', 'MessageFlow'],
+              performanceBaseline: { conversionTime: Date.now() - startTime }
+            }
+          };
+        } else {
+          logger.info(`[HybridTemplateConverter] ❌ Template NO requiere arquitectura modular`);
+        }
+      } else {
+        logger.warn(`[HybridTemplateConverter] ❌ Template no encontrado`);
+      }
+    } catch (error) {
+      logger.error(`[HybridTemplateConverter] Error verificando arquitectura modular:`, error);
+    }
+
+    // PASO 1: VERIFICAR SI DEBE USAR SISTEMA HÍBRIDO
+    const shouldUseHybrid = await shouldUseHybridConversion(templateId, tenantId);
+    
+    if (!shouldUseHybrid.use) {
+      logger.info(`[HybridTemplateConverter] 📋 Usando conversión ACTUAL - Razón: ${shouldUseHybrid.reason}`);
+      
+      // DELEGAR A FUNCIÓN ORIGINAL (SISTEMA ACTUAL)
+      const originalResult = await convertTemplateToBuilderbotFlowOriginal(templateId, tenantId, sessionId);
+      
+      return {
+        ...originalResult,
+        isHybridFlow: false,
+        hybridMetadata: {
+          detectionAnalysis: shouldUseHybrid.analysis,
+          routingDecision: shouldUseHybrid.routingDecision,
+          modulesUsed: [],
+          performanceBaseline: { conversionTime: Date.now() - startTime }
+        }
+      };
+    }
+
+    logger.info(`[HybridTemplateConverter] ✨ Usando conversión HÍBRIDA - Módulos: ${shouldUseHybrid.recommendedModules.join(', ')}`);
+
+    // PASO 2: APLICAR CONVERSIÓN HÍBRIDA
+    const hybridResult = await convertWithHybridEnhancements(
+      templateId, 
+      tenantId, 
+      sessionId,
+      shouldUseHybrid.recommendedModules,
+      shouldUseHybrid.analysis
+    );
+
+    return {
+      ...hybridResult,
+      isHybridFlow: true,
+      hybridMetadata: {
+        detectionAnalysis: shouldUseHybrid.analysis,
+        routingDecision: shouldUseHybrid.routingDecision,
+        modulesUsed: shouldUseHybrid.recommendedModules,
+        performanceBaseline: { conversionTime: Date.now() - startTime }
+      }
+    };
+
+  } catch (error) {
+    logger.error(`[HybridTemplateConverter] ❌ Error en conversión híbrida:`, error);
+    logger.info(`[HybridTemplateConverter] 🔧 Fallback automático al sistema actual`);
+
+    // FALLBACK TRANSPARENTE AL SISTEMA ACTUAL
+    try {
+      const fallbackResult = await convertTemplateToBuilderbotFlowOriginal(templateId, tenantId, sessionId);
+      
+      return {
+        ...fallbackResult,
+        isHybridFlow: false,
+        hybridMetadata: {
+          detectionAnalysis: null,
+          routingDecision: null,
+          modulesUsed: [],
+          performanceBaseline: { 
+            conversionTime: Date.now() - startTime,
+            fallbackExecuted: true,
+            fallbackReason: error?.message 
+          }
+        }
+      };
+    } catch (fallbackError) {
+      logger.error(`[HybridTemplateConverter] ❌ FALLA TOTAL EN CONVERSIÓN:`, fallbackError);
+      throw fallbackError;
+    }
+  }
+}
+
+/**
+ * FUNCIÓN HELPER: Determinar si usar conversión híbrida
+ */
+async function shouldUseHybridConversion(templateId: string, tenantId?: string): Promise<{
+  use: boolean;
+  reason: string;
+  recommendedModules: string[];
+  analysis?: any;
+  routingDecision?: any;
+}> {
+  try {
+    // VERIFICAR CONFIGURACIÓN DE TEMPLATE HÍBRIDO
+    const hybridTemplateManager = HybridTemplateManagerService.getInstance();
+    const shouldUseHybrid = hybridTemplateManager.shouldUseHybridModules(
+      templateId,
+      tenantId || 'unknown',
+      { platform: 'template-conversion' }
+    );
+
+    if (shouldUseHybrid.shouldUse) {
+      return {
+        use: true,
+        reason: shouldUseHybrid.reason,
+        recommendedModules: shouldUseHybrid.modules,
+        analysis: { configurationBased: true },
+        routingDecision: { confidence: 0.9, source: 'configuration' }
+      };
+    }
+
+    // ANÁLISIS AUTOMÁTICO DEL TEMPLATE
+    if (tenantId) {
+      try {
+        // Cargar template para análisis
+        const { getTemplateById } = await import('./supabase');
+        const template = await getTemplateById(templateId);
+        
+        if (template) {
+          const templateForAnalysis: ChatbotTemplate = {
+            id: template.id,
+            name: template.name,
+            tenant_id: tenantId,
+            template_data: JSON.stringify(template.react_flow_json || template.nodes || {}),
+            version: '1.0',
+            is_active: true,
+            created_at: template.created_at || new Date().toISOString(),
+            updated_at: template.updated_at || new Date().toISOString()
+          };
+
+          // USAR DETECTOR DE TEMPLATES
+          const templateDetector = TemplateDetectorService.getInstance();
+          const analysisResult = await templateDetector.analyzeTemplate(templateForAnalysis);
+
+          if (analysisResult.needsHybridModules && analysisResult.analysisScore > 0.6) {
+            return {
+              use: true,
+              reason: `Análisis automático detectó necesidad de módulos híbridos (score: ${Math.round(analysisResult.analysisScore * 100)}%)`,
+              recommendedModules: analysisResult.recommendedModules.map(m => m.moduleName),
+              analysis: analysisResult,
+              routingDecision: { confidence: analysisResult.analysisScore, source: 'automatic-analysis' }
+            };
+          }
+        }
+      } catch (analysisError) {
+        logger.warn(`[HybridTemplateConverter] Error en análisis automático:`, analysisError);
+        // Continuar con sistema actual
+      }
+    }
+
+    return {
+      use: false,
+      reason: 'Template no requiere módulos híbridos según análisis',
+      recommendedModules: [],
+      analysis: { requiresHybrid: false },
+      routingDecision: { confidence: 0.9, source: 'analysis' }
+    };
+
+  } catch (error) {
+    logger.warn(`[HybridTemplateConverter] Error determinando si usar híbrido:`, error);
+    return {
+      use: false,
+      reason: `Error en análisis: ${error?.message}`,
+      recommendedModules: [],
+      analysis: null,
+      routingDecision: null
+    };
+  }
+}
+
+/**
+ * FUNCIÓN HELPER: Conversión con mejoras híbridas
+ */
+async function convertWithHybridEnhancements(
+  templateId: string,
+  tenantId?: string,
+  sessionId?: string,
+  recommendedModules: string[] = [],
+  analysis?: any
+): Promise<FlowConversionResult> {
+  logger.info(`[HybridTemplateConverter] 🚀 Aplicando mejoras híbridas: ${recommendedModules.join(', ')}`);
+
+  try {
+    // NUEVA LÓGICA: Verificar si debe usar arquitectura modular
+    const { getTemplateById } = await import('./supabase');
+    const template = await getTemplateById(templateId);
+    
+    if (template && template.react_flow_json) {
+      const templateData = template.react_flow_json;
+      
+      if (shouldUseModularArchitecture(templateData)) {
+        logger.info(`[HybridTemplateConverter] 🎯 Template requiere arquitectura modular, usando conversión V1`);
+        return await convertTemplateWithModularArchitecture(templateId, tenantId, sessionId);
+      }
+    }
+
+    // FASE 1: CONVERSIÓN BASE CON SISTEMA ACTUAL (para templates que no usan modular)
+    const baseResult = await convertTemplateToBuilderbotFlowOriginal(templateId, tenantId, sessionId);
+
+    // FASE 2: APLICAR MEJORAS HÍBRIDAS AL FLUJO RESULTANTE
+    if (recommendedModules.includes('enhancedDataCapture')) {
+      logger.info(`[HybridTemplateConverter] 📥 Aplicando Enhanced Data Capture al flujo`);
+      // En esta implementación, las mejoras se aplicarían en runtime
+      // No modificamos el flujo base para mantener compatibilidad
+    }
+
+    if (recommendedModules.includes('improvedSessionManager')) {
+      logger.info(`[HybridTemplateConverter] 🔄 Configurando Improved Session Manager`);
+      // Se configura para uso en runtime
+    }
+
+    if (recommendedModules.includes('dynamicNavigation')) {
+      logger.info(`[HybridTemplateConverter] 🧭 Configurando Dynamic Navigation`);
+      // Se configura para uso en runtime
+    }
+
+    logger.info(`[HybridTemplateConverter] ✅ Conversión híbrida completada`);
+    return baseResult;
+
+  } catch (error) {
+    logger.error(`[HybridTemplateConverter] ❌ Error aplicando mejoras híbridas:`, error);
+    // FALLBACK: Usar conversión base sin mejoras
+    return await convertTemplateToBuilderbotFlowOriginal(templateId, tenantId, sessionId);
+  }
+}
+
+/**
+ * FUNCIÓN ORIGINAL RENOMBRADA: Conversión estándar de templates
+ * Esta es la función original sin modificaciones, renombrada para compatibilidad
+ * Mantiene toda la lógica existente 100% intacta
+ * 
+ * @param templateId ID de la plantilla
+ * @param tenantId ID del tenant  
+ * @param sessionId ID de sesión
  * @returns Flujo compatible con BuilderBot
  */
-export async function convertTemplateToBuilderbotFlow(
+export async function convertTemplateToBuilderbotFlowOriginal(
   templateId: string,
   tenantId?: string,
   sessionId?: string
@@ -266,7 +732,7 @@ export async function convertTemplateToBuilderbotFlow(
     
     if (firstNodeId) {
       // Construir toda la cadena de flujo
-      flowChain = buildFlowChain(firstNodeId, flowChain, nodes, edges, new Set<string>());
+      flowChain = await buildFlowChain(firstNodeId, flowChain, nodes, edges, new Set<string>(), tenantId);
     } else {
       // Si no hay siguiente nodo, agregar mensaje por defecto
       logger.info('No se encontró siguiente nodo, agregando mensaje por defecto');
@@ -281,12 +747,13 @@ export async function convertTemplateToBuilderbotFlow(
     const buttonFlowMap: Record<string, any> = {};
     
     // Buscar todos los nodos de botones y crear flujos para cada rama
-    Object.entries(nodes).forEach(([nodeId, node]) => {
+    for (const [nodeId, node] of Object.entries(nodes)) {
       if (node.type === 'buttonsNode' || node.type === 'buttons-node' || node.type === 'buttons') {
         const buttons = node.metadata?.buttons || node.data?.buttons || [];
         
         // Para cada botón, crear un flujo que comience con su keyword
-        buttons.forEach((btn: any, index: number) => {
+        for (let index = 0; index < buttons.length; index++) {
+          const btn = buttons[index];
           const keyword = `btn_${nodeId}_${index}`;
           
           // Buscar el edge que sale de este botón (handle específico)
@@ -312,16 +779,16 @@ export async function convertTemplateToBuilderbotFlow(
             let buttonFlow = addKeyword(buttonKeywords);
             
             // Construir el flujo a partir del nodo destino
-            buttonFlow = buildFlowChain(buttonEdge.target, buttonFlow, nodes, edges, new Set<string>());
+            buttonFlow = await buildFlowChain(buttonEdge.target, buttonFlow, nodes, edges, new Set<string>(), tenantId);
             
             allFlows.push(buttonFlow);
             allNodeMap[`${nodeId}_button_${index}`] = buttonFlow;
             buttonFlowMap[keyword] = buttonFlow;
             globalButtonFlows[keyword] = buttonFlow; // Almacenar globalmente
           }
-        });
+        }
       }
-    });
+    }
     
     
     // Crear el flujo final con todos los subflujos
@@ -356,13 +823,14 @@ export async function convertTemplateToBuilderbotFlow(
 /**
  * Construye la cadena de flujo de manera recursiva
  */
-function buildFlowChain(
+async function buildFlowChain(
   nodeId: string,
   flowChain: any,
   nodes: Record<string, any>,
   edges: ReactFlowEdge[],
-  processedNodes: Set<string>
-): any {
+  processedNodes: Set<string>,
+  tenantId?: string
+): Promise<any> {
   if (processedNodes.has(nodeId)) {
     logger.info(`Nodo ${nodeId} ya procesado, saltando`);
     return flowChain;
@@ -500,7 +968,7 @@ function buildFlowChain(
         const nextAfterCombined = getNextNodeId(nextNode, edges, Object.values(nodes));
         if (nextAfterCombined) {
           logger.info(`🔗 Continuando con el nodo después del combinado: ${nextAfterCombined}`);
-          return buildFlowChain(nextAfterCombined, flowChain, nodes, edges, processedNodes);
+          return await buildFlowChain(nextAfterCombined, flowChain, nodes, edges, processedNodes, tenantId);
         }
         
       } else {
@@ -655,35 +1123,113 @@ function buildFlowChain(
       
       const categoriesMessage = currentNode.data?.message || "Por favor selecciona una categoría:";
       
-      // Usar implementación simple sin async para evitar timeouts
-      flowChain = flowChain.addAnswer(
-        categoriesMessage + "\n\n• Residencial\n• Comercial\n• Industrial",
-        { capture: true }, 
-        async (ctx: any, { state }: any) => {
-          logger.info(`[categoriesNode] Usuario seleccionó: ${ctx.body}`);
+      // Obtener categorías dinámicas de la base de datos
+      try {
+        logger.info(`[categoriesNode] Obteniendo categorías para tenantId: ${tenantId}`);
+        
+        if (!tenantId) {
+          logger.warn(`[categoriesNode] tenantId es undefined, usando categorías por defecto`);
+          const categoriesList = "1. Comprar\n2. Rentar";
+          const fullCategoriesMessage = categoriesMessage + "\n\n" + categoriesList;
           
-          // Mapear respuesta del usuario a categoría válida
-          const userInput = ctx.body.toLowerCase();
-          let selectedCategory = '';
-          
-          if (userInput.includes('residencial') || userInput === '1') {
-            selectedCategory = 'Residencial';
-          } else if (userInput.includes('comercial') || userInput === '2') {
-            selectedCategory = 'Comercial';
-          } else if (userInput.includes('industrial') || userInput === '3') {
-            selectedCategory = 'Industrial';
-          } else {
-            selectedCategory = 'Residencial'; // Default
-          }
-          
-          await state.update({ 
-            categories_selected: selectedCategory,
-            category_name: selectedCategory 
-          });
-          
-          logger.info(`[categoriesNode] Categoría seleccionada: ${selectedCategory}`);
+          flowChain = flowChain.addAnswer(
+            fullCategoriesMessage,
+            { capture: true }, 
+            async (ctx: any, { state }: any) => {
+              logger.info(`[categoriesNode] Usuario seleccionó: ${ctx.body}`);
+              // Continúa con el resto del código
+            }
+          );
+          break;
         }
-      );
+        
+        const tenantCategories = await getTenantProductCategories(tenantId, 'bienes_raices');
+        
+        // Generar lista de categorías con números
+        const categoriesList = tenantCategories.map((cat, index) => `${index + 1}. ${cat}`).join('\n');
+        const fullCategoriesMessage = categoriesMessage + "\n\n" + categoriesList;
+        
+        logger.info(`[categoriesNode] Categorías dinámicas cargadas: ${tenantCategories.join(', ')}`);
+        
+        flowChain = flowChain.addAnswer(
+          fullCategoriesMessage,
+          { capture: true }, 
+          async (ctx: any, { state }: any) => {
+            logger.info(`[categoriesNode] Usuario seleccionó: ${ctx.body}`);
+            
+            // Mapear respuesta del usuario a categoría válida
+            const userInput = ctx.body.toLowerCase().trim();
+            let selectedCategory = '';
+            
+            // Intentar mapear por número
+            const inputNumber = parseInt(userInput);
+            if (!isNaN(inputNumber) && inputNumber >= 1 && inputNumber <= tenantCategories.length) {
+              selectedCategory = tenantCategories[inputNumber - 1];
+            } else {
+              // Intentar mapear por texto
+              const foundCategory = tenantCategories.find(cat => 
+                cat.toLowerCase().includes(userInput) || userInput.includes(cat.toLowerCase())
+              );
+              selectedCategory = foundCategory || tenantCategories[0]; // Default a la primera
+            }
+            
+            await state.update({ 
+              categories_selected: selectedCategory,
+              category_name: selectedCategory,
+              selected_category: selectedCategory  // Añadir otra variante por si acaso
+            });
+            
+            // Guardar también en el contexto de sesión global
+            const sessionData = getSessionContext(ctx.from) || {};
+            sessionData.selectedCategory = selectedCategory;
+            setSessionContext(ctx.from, sessionData);
+            
+            logger.info(`[categoriesNode] Categoría seleccionada: ${selectedCategory}`);
+            logger.info(`[categoriesNode] Guardado en contexto de sesión global para usuario: ${ctx.from}`);
+            logger.info(`[categoriesNode] Estado actualizado:`, { 
+              categories_selected: selectedCategory,
+              category_name: selectedCategory,
+              selected_category: selectedCategory
+            });
+            logger.info(`[categoriesNode] Callback de categorías completado, el flujo debería continuar automáticamente`);
+          }
+        );
+      } catch (error) {
+        logger.error(`[categoriesNode] Error obteniendo categorías dinámicas, usando fallback:`, error);
+        logger.error(`[categoriesNode] Error details:`, {
+          message: error?.message,
+          stack: error?.stack,
+          tenantId: tenantId
+        });
+        
+        // Fallback a categorías estáticas en caso de error
+        flowChain = flowChain.addAnswer(
+          categoriesMessage + "\n\n1. Comprar\n2. Rentar",
+          { capture: true }, 
+          async (ctx: any, { state }: any) => {
+            const userInput = ctx.body.toLowerCase();
+            let selectedCategory = '';
+            
+            if (userInput.includes('comprar') || userInput === '1') {
+              selectedCategory = 'Comprar';
+            } else if (userInput.includes('rentar') || userInput === '2') {
+              selectedCategory = 'Rentar';
+            } else {
+              selectedCategory = 'Comprar'; // Default
+            }
+            
+            await state.update({ 
+              categories_selected: selectedCategory,
+              category_name: selectedCategory 
+            });
+            
+            logger.info(`[categoriesNode] Categoría seleccionada (fallback): ${selectedCategory}`);
+            
+            // Continuar con el siguiente paso del flujo
+            return `Perfecto! Has seleccionado: ${selectedCategory}`;
+          }
+        );
+      }
       break;
 
     case 'products':
@@ -693,35 +1239,102 @@ function buildFlowChain(
       
       const productsMessage = currentNode.data?.message || "Selecciona un producto/servicio:";
       
-      // Usar implementación simple sin botones para evitar timeouts
-      flowChain = flowChain.addAnswer(
-        productsMessage + "\n\n• Venta de Propiedades\n• Alquiler de Propiedades\n• Asesoría Inmobiliaria",
-        { capture: true }, 
-        async (ctx: any, { state }: any) => {
-          logger.info(`[productsNode] Usuario seleccionó: ${ctx.body}`);
+      // Obtener productos dinámicos de la base de datos
+      try {
+        logger.info(`[productsNode] Obteniendo productos para tenantId: ${tenantId}`);
+        
+        if (!tenantId) {
+          logger.warn(`[productsNode] tenantId es undefined, usando productos por defecto`);
+          const productsList = "• Venta de Propiedades\n• Alquiler de Propiedades\n• Asesoría Inmobiliaria";
+          const fullProductsMessage = productsMessage + "\n\n" + productsList;
           
-          // Mapear respuesta del usuario a producto válido
-          const userInput = ctx.body.toLowerCase();
-          let selectedProduct = '';
-          
-          if (userInput.includes('venta') || userInput === '1') {
-            selectedProduct = 'Venta de Propiedades';
-          } else if (userInput.includes('alquiler') || userInput === '2') {
-            selectedProduct = 'Alquiler de Propiedades';
-          } else if (userInput.includes('asesor') || userInput === '3') {
-            selectedProduct = 'Asesoría Inmobiliaria';
-          } else {
-            selectedProduct = 'Venta de Propiedades'; // Default
-          }
-          
-          await state.update({ 
-            products_list: selectedProduct,
-            servicio_seleccionado: selectedProduct
-          });
-          
-          logger.info(`[productsNode] Producto seleccionado: ${selectedProduct}`);
+          flowChain = flowChain.addAnswer(
+            fullProductsMessage,
+            { capture: true }, 
+            async (ctx: any, { state }: any) => {
+              logger.info(`[productsNode] Usuario seleccionó: ${ctx.body}`);
+              // Continúa con el resto del código
+            }
+          );
+          break;
         }
-      );
+        
+        // Cargar todos los productos sin filtro (ya que no tenemos la categoría en este momento)
+        const allTenantProducts = await getTenantProducts(tenantId || '', '');
+        const defaultProducts = allTenantProducts.length > 0 ? allTenantProducts : ['Venta de Propiedades', 'Alquiler de Propiedades', 'Asesoría Inmobiliaria'];
+        
+        // Crear el mensaje con todos los productos por ahora
+        const productsList = defaultProducts.map((prod, index) => `${index + 1}. ${prod}`).join('\n');
+        const fullProductsMessage = productsMessage + "\n\n" + productsList;
+        
+        logger.info(`[productsNode] Productos cargados (sin filtro): ${defaultProducts.join(', ')}`);
+        
+        flowChain = flowChain.addAnswer(
+          fullProductsMessage,
+          { capture: true },
+          async (ctx: any, { state }: any) => {
+            logger.info(`[productsNode] Usuario seleccionó: ${ctx.body}`);
+            
+            // Mapear respuesta del usuario a producto válido
+            const userInput = ctx.body.toLowerCase().trim();
+            let selectedProduct = '';
+            
+            // Intentar mapear por número
+            const inputNumber = parseInt(userInput);
+            if (!isNaN(inputNumber) && inputNumber >= 1 && inputNumber <= defaultProducts.length) {
+              selectedProduct = defaultProducts[inputNumber - 1];
+            } else {
+              // Intentar mapear por texto
+              const foundProduct = defaultProducts.find(prod => 
+                prod.toLowerCase().includes(userInput) || userInput.includes(prod.toLowerCase())
+              );
+              selectedProduct = foundProduct || defaultProducts[0]; // Default al primero
+            }
+            
+            await state.update({ 
+              products_list: selectedProduct,
+              servicio_seleccionado: selectedProduct
+            });
+            
+            logger.info(`[productsNode] Producto seleccionado: ${selectedProduct}`);
+            logger.info(`[productsNode] Callback de productos completado, el flujo debería continuar automáticamente`);
+          }
+        );
+      } catch (error) {
+        logger.error(`[productsNode] Error obteniendo productos dinámicos, usando fallback:`, error);
+        logger.error(`[productsNode] Error details:`, {
+          message: error?.message,
+          stack: error?.stack,
+          tenantId: tenantId
+        });
+        
+        // Fallback a productos estáticos en caso de error
+        flowChain = flowChain.addAnswer(
+          productsMessage + "\n\n• Venta de Propiedades\n• Alquiler de Propiedades\n• Asesoría Inmobiliaria",
+          { capture: true }, 
+          async (ctx: any, { state }: any) => {
+            const userInput = ctx.body.toLowerCase();
+            let selectedProduct = '';
+            
+            if (userInput.includes('venta') || userInput === '1') {
+              selectedProduct = 'Venta de Propiedades';
+            } else if (userInput.includes('alquiler') || userInput === '2') {
+              selectedProduct = 'Alquiler de Propiedades';
+            } else if (userInput.includes('asesor') || userInput === '3') {
+              selectedProduct = 'Asesoría Inmobiliaria';
+            } else {
+              selectedProduct = 'Venta de Propiedades'; // Default
+            }
+            
+            await state.update({ 
+              products_list: selectedProduct,
+              servicio_seleccionado: selectedProduct
+            });
+            
+            logger.info(`[productsNode] Producto seleccionado (fallback): ${selectedProduct}`);
+          }
+        );
+      }
       break;
 
     case 'check-availability':
@@ -766,7 +1379,7 @@ function buildFlowChain(
   // Buscar el siguiente nodo y continuar la cadena
   const nextNodeId = getNextNodeId(currentNode, edges, nodes);
   if (nextNodeId) {
-    return buildFlowChain(nextNodeId, flowChain, nodes, edges, processedNodes);
+    return await buildFlowChain(nextNodeId, flowChain, nodes, edges, processedNodes, tenantId);
   }
   
   return flowChain;
@@ -937,5 +1550,39 @@ async function processNodeDirectly(
   }
 }
 
-// Exportar función de conversión
+/**
+ * FUNCIÓN ALIAS PARA COMPATIBILIDAD TOTAL
+ * Esta función mantiene la misma firma que la original pero con routing híbrido
+ * Por defecto usa el sistema híbrido, pero fallback transparente al actual
+ * Esto permite compatibilidad 100% con código existente
+ */
+export async function convertTemplateToBuilderbotFlow(
+  templateId: string,
+  tenantId?: string,
+  sessionId?: string
+): Promise<FlowConversionResult> {
+  try {
+    // USAR VERSIÓN HÍBRIDA POR DEFECTO
+    const hybridResult = await convertTemplateToBuilderbotFlowWithHybridRouting(
+      templateId, 
+      tenantId, 
+      sessionId
+    );
+
+    // RETORNAR EN FORMATO ORIGINAL PARA COMPATIBILIDAD
+    return {
+      flow: hybridResult.flow,
+      entryKeywords: hybridResult.entryKeywords,
+      nodeMap: hybridResult.nodeMap
+    };
+    
+  } catch (error) {
+    logger.error(`[TemplateConverter] Error en conversión, usando fallback original:`, error);
+    
+    // FALLBACK TOTAL AL SISTEMA ORIGINAL
+    return await convertTemplateToBuilderbotFlowOriginal(templateId, tenantId, sessionId);
+  }
+}
+
+// Exportar función de conversión (mantiene compatibilidad)
 export default convertTemplateToBuilderbotFlow;

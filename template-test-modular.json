@@ -1,0 +1,181 @@
+{
+  "id": "test-modular-v1",
+  "name": "Test Completo Arquitectura Modular V1",
+  "description": "Template para probar todos los nodos modulares implementados",
+  "version": "1.0.0",
+  "tenantId": "test-tenant",
+  "nodes": {
+    "start-1": {
+      "id": "start-1",
+      "type": "message",
+      "position": { "x": 100, "y": 100 },
+      "data": {
+        "message": "¡Hola! 👋 Bienvenido al test de la arquitectura modular V1.\n\nVamos a probar todos los nodos implementados:",
+        "waitForResponse": false
+      }
+    },
+    "input-1": {
+      "id": "input-1", 
+      "type": "input",
+      "position": { "x": 100, "y": 200 },
+      "data": {
+        "message": "Primero, ¿cuál es tu nombre completo?",
+        "variableName": "user_name",
+        "validation": {
+          "type": "name",
+          "required": true,
+          "minLength": 2,
+          "errorMessage": "Por favor ingresa un nombre válido (mínimo 2 caracteres)"
+        },
+        "placeholder": "Juan Pérez",
+        "successMessage": "¡Perfecto {{value}}! 👤"
+      }
+    },
+    "buttons-1": {
+      "id": "buttons-1",
+      "type": "buttons", 
+      "position": { "x": 100, "y": 300 },
+      "data": {
+        "message": "Ahora {{user_name}}, ¿qué tipo de servicio te interesa?",
+        "buttons": [
+          {
+            "id": "inmobiliario",
+            "text": "🏠 Inmobiliario",
+            "value": "bienes_raices",
+            "description": "Propiedades y terrenos"
+          },
+          {
+            "id": "medico",
+            "text": "🏥 Médico", 
+            "value": "medicina",
+            "description": "Consultas y tratamientos"
+          },
+          {
+            "id": "otro",
+            "text": "📞 Otro servicio",
+            "value": "otro",
+            "description": "Otros servicios disponibles"
+          }
+        ],
+        "showNumbers": true,
+        "allowTextInput": false
+      }
+    },
+    "categories-1": {
+      "id": "categories-1",
+      "type": "categories",
+      "position": { "x": 100, "y": 400 },
+      "data": {
+        "message": "Excelente elección {{user_name}}! 🎯\n\nElige una categoría específica:",
+        "salesStageId": "prospectando"
+      }
+    },
+    "products-1": {
+      "id": "products-1", 
+      "type": "products",
+      "position": { "x": 100, "y": 500 },
+      "data": {
+        "message": "Perfecto! Aquí tienes los productos/servicios disponibles en esa categoría:",
+        "salesStageId": "calificacion"
+      }
+    },
+    "input-email": {
+      "id": "input-email",
+      "type": "input",
+      "position": { "x": 100, "y": 600 },
+      "data": {
+        "message": "¡Excelente selección {{user_name}}! 📧\n\nPara continuar, necesito tu email:",
+        "variableName": "user_email", 
+        "validation": {
+          "type": "email",
+          "required": true,
+          "errorMessage": "Por favor ingresa un email válido"
+        },
+        "placeholder": "juan@ejemplo.com",
+        "retryMessage": "Ese email no parece válido. Intenta nuevamente:",
+        "maxRetries": 2
+      }
+    },
+    "input-phone": {
+      "id": "input-phone",
+      "type": "input", 
+      "position": { "x": 100, "y": 700 },
+      "data": {
+        "message": "Y por último, tu número de teléfono:",
+        "variableName": "user_phone",
+        "validation": {
+          "type": "phone", 
+          "required": true,
+          "errorMessage": "Por favor ingresa un número de teléfono válido"
+        },
+        "placeholder": "+52 55 1234 5678",
+        "maxRetries": 2
+      }
+    },
+    "final-1": {
+      "id": "final-1",
+      "type": "message",
+      "position": { "x": 100, "y": 800 },
+      "data": {
+        "message": "🎉 ¡Test completado exitosamente {{user_name}}!\n\n✅ Datos capturados:\n• Nombre: {{user_name}}\n• Email: {{user_email}}\n• Teléfono: {{user_phone}}\n• Servicio: {{lastButtonSelection}}\n• Categoría: {{selectedCategory}}\n• Producto: {{selectedProduct}}\n\n¡La arquitectura modular V1 funciona perfectamente! 🚀",
+        "waitForResponse": false,
+        "salesStageId": "oportunidad"
+      }
+    }
+  },
+  "edges": [
+    {
+      "id": "edge-1",
+      "source": "start-1",
+      "target": "input-1",
+      "type": "default"
+    },
+    {
+      "id": "edge-2", 
+      "source": "input-1",
+      "target": "buttons-1",
+      "type": "default"
+    },
+    {
+      "id": "edge-3",
+      "source": "buttons-1", 
+      "target": "categories-1",
+      "type": "default"
+    },
+    {
+      "id": "edge-4",
+      "source": "categories-1",
+      "target": "products-1", 
+      "type": "default"
+    },
+    {
+      "id": "edge-5",
+      "source": "products-1",
+      "target": "input-email",
+      "type": "default"
+    },
+    {
+      "id": "edge-6",
+      "source": "input-email",
+      "target": "input-phone",
+      "type": "default"
+    },
+    {
+      "id": "edge-7",
+      "source": "input-phone", 
+      "target": "final-1",
+      "type": "default"
+    }
+  ],
+  "viewport": {
+    "x": 0,
+    "y": 0,
+    "zoom": 1
+  },
+  "metadata": {
+    "createdAt": "2025-01-11T00:00:00Z",
+    "updatedAt": "2025-01-11T00:00:00Z",
+    "testVersion": "modular-v1",
+    "purpose": "Complete testing of all modular nodes"
+  }
+}
