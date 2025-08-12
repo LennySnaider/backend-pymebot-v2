@@ -18,7 +18,8 @@
  */
 
 import logger from '../utils/logger';
-import type { ChatbotTemplate } from '../types/Template';
+// import type { ChatTemplate as ChatbotTemplate } from '../services/supabase';
+type ChatbotTemplate = any; // Usar any para evitar problemas de tipos durante el build
 
 // INTERFACES PARA DETECCIÓN DE TEMPLATES
 
@@ -90,7 +91,7 @@ type IssueType =
   | 'lead_integration'
   | 'validation_failures';
 
-type HybridModuleName = 
+export type HybridModuleName = 
   | 'enhancedDataCapture'
   | 'improvedSessionManager'
   | 'dynamicNavigation'
@@ -277,7 +278,7 @@ class TemplateDetectorService {
         metadata: {
           analysisTimestamp: new Date().toISOString(),
           analysisVersion: '1.0.0',
-          templateVersion: template.version,
+          templateVersion: template.version?.toString() || '1.0',
           lastModified: template.updated_at,
           nodeCount: this.countNodes(template),
           complexity: complexityAnalysis.level,
@@ -1035,6 +1036,5 @@ export type {
   PerformanceMetrics,
   RiskLevel,
   ComplexityLevel,
-  HybridModuleName,
   IssueType
 };

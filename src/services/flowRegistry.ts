@@ -32,6 +32,7 @@ import { WebProvider } from "../provider/webProvider";
 import HybridFlowRegistry, { processHybridFlowMessage } from './hybridFlowRegistry';
 import SystemRouterService from '../utils/systemRouter';
 import HybridMetricsCollectorService from '../utils/hybridMetricsCollector';
+import type { HybridModuleName } from '../utils/templateDetector';
 
 // CONFIGURACIÓN HÍBRIDA
 interface HybridConfiguration {
@@ -43,10 +44,10 @@ interface HybridConfiguration {
 
 // CONFIGURACIÓN GLOBAL (POR DEFECTO HÍBRIDO DESHABILITADO PARA SEGURIDAD)
 let hybridConfig: HybridConfiguration = {
-  enableHybridRouting: false, // Por defecto OFF para seguridad
+  enableHybridRouting: true, // HABILITADO: Sistema híbrido para templates complejas
   hybridFallbackEnabled: true,
   metricsEnabled: true,
-  debugMode: false
+  debugMode: true // HABILITADO: Para debugging y monitoring
 };
 
 // Estado local para flujos persistentes entre mensajes
@@ -440,7 +441,7 @@ export async function processFlowMessage(
           templateId || 'unknown',
           tenantId,
           { responseTime: 0 }, // Se actualizará al final
-          { platform: 'web', userId: phoneFrom }
+          { platform: 'web' }
         );
       } catch (metricsError) {
         logger.warn(`[FlowRegistry] Error registrando métricas:`, metricsError);
@@ -483,7 +484,7 @@ export async function processFlowMessage(
               { 
                 responseTime: Date.now() - startTime,
                 captureSuccess: true,
-                modulesUsed: shouldUseHybrid.modules
+                modulesUsed: shouldUseHybrid.modules as HybridModuleName[]
               }
             );
           } catch (metricsError) {
@@ -504,7 +505,7 @@ export async function processFlowMessage(
             try {
               const metricsCollector = HybridMetricsCollectorService.getInstance();
               metricsCollector.recordEvent(
-                'fallback_executed',
+                'fallback_triggered',
                 'current',
                 templateId || 'unknown',
                 tenantId,
@@ -1431,7 +1432,7 @@ export async function getHybridMetrics(): Promise<any> {
     const now = new Date();
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     
-    return await metricsCollector.getAggregatedMetrics('all', 'both', yesterday, now);
+    return await metricsCollector.getRealTimeMetrics();
   } catch (error) {
     logger.error(`[FlowRegistry] Error obteniendo métricas híbridas:`, error);
     return { error: error?.message };

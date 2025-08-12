@@ -537,7 +537,7 @@ export class WebProvider extends ProviderClass {
    * @param eventName Nombre del evento
    * @param callback Función callback
    */
-  on(eventName: string, callback: Function) {
+  on(eventName: string, callback: (...args: any[]) => void) {
     logger.info(`[WebProvider] Registrando listener para evento: ${eventName}`);
     this.vendor.on(eventName, callback);
   }

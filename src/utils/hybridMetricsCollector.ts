@@ -56,6 +56,8 @@ interface EventData {
   // Métricas de uso
   modulesUsed?: HybridModuleName[];
   fallbackOccurred?: boolean;
+  fallbackReason?: string;
+  originalError?: string;
   retryAttempts?: number;
   
   // Datos adicionales

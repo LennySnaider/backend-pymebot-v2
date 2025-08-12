@@ -70,7 +70,7 @@ const createButtonsFlow = () => {
         // Procesar mensaje con variables
         let message = nodeData.message;
         if (currentState.globalVars) {
-          message = await replaceVariables(message, currentState.globalVars, tenantId, currentState.sessionId);
+          message = replaceVariables(message, currentState.globalVars);
         }
         
         // Verificar si el provider soporta botones nativos
@@ -179,13 +179,16 @@ const createButtonsFlow = () => {
         // Procesar acciones del sales funnel (CRÍTICO - NO MODIFICAR)
         if (currentState.nodeData?.salesStageId) {
           try {
-            await processSalesFunnelActions(
-              ctx.from,
-              currentState.nodeData.salesStageId,
-              currentState.tenantId,
-              ctx,
-              { state }
-            );
+            // Crear estructura de nodo para sales funnel
+            const nodeForSales = {
+              id: currentState.nodeData.id || 'button-node',
+              type: 'buttons',
+              content: currentState.nodeData.message || '',
+              metadata: { salesStageId: currentState.nodeData.salesStageId },
+              data: { salesStageId: currentState.nodeData.salesStageId }
+            };
+            
+            await processSalesFunnelActions(nodeForSales, currentState as any);
             logger.info(`[ButtonsFlow] Sales funnel procesado para stage: ${currentState.nodeData.salesStageId}`);
           } catch (salesError) {
             logger.error(`[ButtonsFlow] Error procesando sales funnel:`, salesError);

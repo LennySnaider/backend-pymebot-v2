@@ -397,8 +397,7 @@ export const logMessage = async (
       .from("messages") // Asegúrate que la tabla se llame 'messages'
       .insert(messageToInsert)
       .select("id")
-      .single()
-      .abortSignal(controller.signal);
+      .single();
       
     clearTimeout(timeoutId);
 
@@ -1191,8 +1190,7 @@ export const createNewConversation = async (
         ignoreDuplicates: false
       })
       .select("id")
-      .single()
-      .abortSignal(userController.signal);
+      .single();
       
     clearTimeout(userTimeoutId);
 
@@ -1215,8 +1213,7 @@ export const createNewConversation = async (
         last_message_at: new Date().toISOString()
       })
       .select("id")
-      .single()
-      .abortSignal(convController.signal);
+      .single();
       
     clearTimeout(convTimeoutId);
 

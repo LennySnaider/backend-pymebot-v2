@@ -126,7 +126,7 @@ const createProductsFlow = () => {
               metadata: { salesStageId: nodeData.salesStageId },
               data: { salesStageId: nodeData.salesStageId }
             },
-            currentState
+            currentState as any
           );
         }
         

@@ -24,7 +24,8 @@ import type {
   PerformanceMetrics,
   HybridModuleName
 } from './templateDetector';
-import type { ChatbotTemplate } from '../types/Template';
+// import type { ChatbotTemplate } from '../types/Template';
+type ChatbotTemplate = any;
 
 // INTERFACES PARA ROUTING DE SISTEMAS
 

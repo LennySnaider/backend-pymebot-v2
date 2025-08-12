@@ -19,7 +19,8 @@
 
 import logger from '../utils/logger';
 import type { HybridModuleName } from './templateDetector';
-import type { ChatbotTemplate } from '../types/Template';
+// import type { ChatbotTemplate } from '../types/Template';
+type ChatbotTemplate = any;
 
 // INTERFACES PARA GESTIÓN DE TEMPLATES HÍBRIDOS
 

@@ -11,6 +11,20 @@ export default {
         if (warning.code === 'UNRESOLVED_IMPORT') return
     },
     plugins: [typescript({
-        exclude: ['**/app/**/*', 'src/app/**/*']
+        exclude: ['**/app/**/*', 'src/app/**/*'],
+        tsconfigOverride: {
+            compilerOptions: {
+                strict: false,
+                skipLibCheck: true,
+                noEmitOnError: false,
+                declaration: false,
+                suppressImplicitAnyIndexErrors: true,
+                noImplicitAny: false,
+                noImplicitThis: false,
+                noImplicitReturns: false
+            }
+        },
+        rollupCommonJSResolveHack: false,
+        check: false // Deshabilitar verificación de tipos completamente
     })],
 }

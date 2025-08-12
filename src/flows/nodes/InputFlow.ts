@@ -66,7 +66,7 @@ const createInputFlow = () => {
         // Procesar mensaje con variables
         let message = nodeData.message;
         if (currentState.globalVars) {
-          message = await replaceVariables(message, currentState.globalVars, tenantId, currentState.sessionId);
+          message = replaceVariables(message, currentState.globalVars);
         }
         
         // Agregar placeholder si existe
@@ -193,11 +193,9 @@ const createInputFlow = () => {
           
           // Mostrar mensaje de éxito si existe
           if (inputConfig.successMessage) {
-            const successMessage = await replaceVariables(
+            const successMessage = replaceVariables(
               inputConfig.successMessage.replace('{{value}}', userResponse),
-              currentState.globalVars,
-              currentState.tenantId,
-              currentState.sessionId
+              currentState.globalVars
             );
             await flowDynamic([successMessage]);
           }
@@ -208,13 +206,16 @@ const createInputFlow = () => {
         // Procesar acciones del sales funnel (CRÍTICO - NO MODIFICAR)
         if (currentState.nodeData?.salesStageId) {
           try {
-            await processSalesFunnelActions(
-              ctx.from,
-              currentState.nodeData.salesStageId,
-              currentState.tenantId,
-              ctx,
-              { state }
-            );
+            // Crear estructura de nodo para sales funnel
+            const nodeForSales = {
+              id: currentState.nodeData.id || 'input-node',
+              type: 'input',
+              content: currentState.nodeData.message || '',
+              metadata: { salesStageId: currentState.nodeData.salesStageId },
+              data: { salesStageId: currentState.nodeData.salesStageId }
+            };
+            
+            await processSalesFunnelActions(nodeForSales, currentState as any);
             logger.info(`[InputFlow] Sales funnel procesado para stage: ${currentState.nodeData.salesStageId}`);
           } catch (salesError) {
             logger.error(`[InputFlow] Error procesando sales funnel:`, salesError);

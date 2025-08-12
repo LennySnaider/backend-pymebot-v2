@@ -33,7 +33,7 @@ import TemplateDetectorService from '../utils/templateDetector';
 import SystemRouterService from '../utils/systemRouter';
 import HybridTemplateManagerService from '../utils/hybridTemplateManager';
 import type { RoutingContext } from '../utils/systemRouter';
-import type { ChatbotTemplate } from '../types/Template';
+import type { ChatTemplate as ChatbotTemplate } from './supabase';
 
 // Store global para flujos creados
 const globalButtonFlows: Record<string, any> = {};
@@ -174,10 +174,15 @@ async function convertTemplateWithModularArchitecture(
     const fallbackFlow = createFallbackFlow();
     
     // Crear flujo combinado
+    const modularFlows = Object.values(ModularFlows).filter((flow): flow is any => {
+      // Solo incluir flujos válidos, no funciones
+      return typeof flow === 'object' && flow !== null;
+    });
+    
     const combinedFlow = createFlow([
       mainFlow,
       fallbackFlow,
-      ...Object.values(ModularFlows)
+      ...modularFlows
     ]);
     
     logger.info(`[ModularConverter] Flujo modular creado exitosamente`);
@@ -238,6 +243,7 @@ function createSalesFunnelCallback(nodeData: any) {
         const nodeForFunnel = {
           id: nodeData.id,
           type: nodeData.type,
+          content: nodeData.message || '',
           metadata: {
             salesStageId: nodeData.salesStageId
           },
@@ -463,12 +469,12 @@ async function shouldUseHybridConversion(templateId: string, tenantId?: string):
         const template = await getTemplateById(templateId);
         
         if (template) {
-          const templateForAnalysis: ChatbotTemplate = {
+          const templateForAnalysis: any = {
             id: template.id,
             name: template.name,
             tenant_id: tenantId,
             template_data: JSON.stringify(template.react_flow_json || template.nodes || {}),
-            version: '1.0',
+            version: 1.0,
             is_active: true,
             created_at: template.created_at || new Date().toISOString(),
             updated_at: template.updated_at || new Date().toISOString()
@@ -776,7 +782,11 @@ export async function convertTemplateToBuilderbotFlowOriginal(
             logger.info(`Keywords para botón: ${buttonKeywords.join(', ')}`);
             
             // Crear un nuevo flujo que comience con estos keywords
-            let buttonFlow = addKeyword(buttonKeywords);
+            // Asegurar que buttonKeywords no esté vacío y tiene al menos un elemento
+            const keywordsToUse = buttonKeywords.length > 0 ? buttonKeywords : [keyword || 'button'];
+            // Garantizar que hay al menos un elemento
+            const [firstKeyword, ...restKeywords] = keywordsToUse.length > 0 ? keywordsToUse : ['button'];
+            let buttonFlow = addKeyword([firstKeyword, ...restKeywords]);
             
             // Construir el flujo a partir del nodo destino
             buttonFlow = await buildFlowChain(buttonEdge.target, buttonFlow, nodes, edges, new Set<string>(), tenantId);
