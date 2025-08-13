@@ -111,6 +111,10 @@ const createMessageFlow = () => {
                   case 'inputnode':
                     const InputFlow = (await import('./InputFlow')).default;
                     return gotoFlow(InputFlow);
+                  case 'buttons':
+                  case 'buttonsnode':
+                    const ButtonsFlow = (await import('./ButtonsFlow')).default;
+                    return gotoFlow(ButtonsFlow);
                   default:
                     logger.warn(`[MessageFlow] Tipo de nodo no reconocido: ${nextEdge.targetNode.type}`);
                 }
@@ -171,6 +175,10 @@ const createMessageFlow = () => {
               case 'productsnode':
                 const ProductsFlow = (await import('./ProductsFlow')).default;
                 return gotoFlow(ProductsFlow);
+              case 'buttons':
+              case 'buttonsnode':
+                const ButtonsFlow = (await import('./ButtonsFlow')).default;
+                return gotoFlow(ButtonsFlow);
               default:
                 logger.warn(`[MessageFlow] Tipo de nodo no reconocido: ${nextEdge.targetNode.type}`);
             }
