@@ -220,7 +220,7 @@ class SystemRouterService {
         }
       },
       emergencyMode: {
-        enableEmergencyMode: true,
+        enableEmergencyMode: false, // DESHABILITADO: Evita falsos positivos durante bootstrap
         emergencyTriggers: {
           systemErrorRate: 0.2,
           hybridErrorRate: 0.3,
