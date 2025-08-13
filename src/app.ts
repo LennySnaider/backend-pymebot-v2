@@ -223,9 +223,15 @@ const main = async () => {
         const flowService = new FlowService();
         const tenantId = config.multitenant.defaultTenant;
 
-        const dynamicFlow = await flowService.getFlowByTenant(tenantId);
-        // Crear un flujo vacío por ahora ya que no estamos usando BuilderBot flows tradicionales
-        const adapterFlow = createFlow([]);
+        // SOLUCIÓN: Integrar WhatsApp con flujos modulares usando bridge service
+        const { WhatsAppFlowBridge } = await import("./services/whatsappFlowBridge");
+        const flowBridge = WhatsAppFlowBridge.getInstance();
+        
+        // Crear flujo principal que usa el bridge service
+        const mainFlow = flowBridge.createMainWhatsAppFlow();
+        const adapterFlow = createFlow([mainFlow]);
+        
+        logger.info("WhatsApp Flow Bridge configurado correctamente");
 
         // IMPORTANTE: Creamos el bot y capturamos el valor de retorno
         // Esto es crucial para que los eventos de WhatsApp (como el QR) funcionen correctamente

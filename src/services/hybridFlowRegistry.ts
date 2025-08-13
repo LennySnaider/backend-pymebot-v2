@@ -41,7 +41,7 @@ import HybridTemplateManagerService from '../utils/hybridTemplateManager';
 import HybridMetricsCollectorService from '../utils/hybridMetricsCollector';
 import { EnhancedDataCapture } from './enhancedDataCapture';
 import ImprovedSessionManagerService from './improvedSessionManager';
-import DynamicNavigationService from './dynamicNavigation';
+// import DynamicNavigationService from './dynamicNavigation'; // TEMPORALMENTE DESHABILITADO
 
 import type { 
   RoutingDecision, 
@@ -149,7 +149,7 @@ export class HybridFlowRegistry {
   private metricsCollector: HybridMetricsCollectorService;
   private enhancedCapture: typeof EnhancedDataCapture;
   private sessionManager: ImprovedSessionManagerService;
-  private dynamicNavigation: DynamicNavigationService;
+  // private dynamicNavigation: DynamicNavigationService; // TEMPORALMENTE DESHABILITADO
 
   private constructor() {
     // INICIALIZAR SERVICIOS HÍBRIDOS
@@ -160,7 +160,7 @@ export class HybridFlowRegistry {
     this.metricsCollector = HybridMetricsCollectorService.getInstance();
     this.enhancedCapture = EnhancedDataCapture;
     this.sessionManager = ImprovedSessionManagerService.getInstance();
-    this.dynamicNavigation = DynamicNavigationService.getInstance();
+    // this.dynamicNavigation = DynamicNavigationService.getInstance(); // TEMPORALMENTE DESHABILITADO
     
     logger.info('[HybridFlowRegistry] Servicios híbridos inicializados');
   }

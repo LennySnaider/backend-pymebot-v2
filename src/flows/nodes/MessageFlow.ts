@@ -18,7 +18,7 @@ import { replaceVariables } from '../../utils/variableReplacer';
  */
 const createMessageFlow = () => {
   return addKeyword(['MESSAGE', 'message', 'MENSAJE', 'mensaje'])
-    .addAction(async (ctx, { flowDynamic, state }) => {
+    .addAction(async (ctx, { flowDynamic, state, gotoFlow }) => {
       try {
         logger.info(`[MessageFlow] Mostrando mensaje para usuario: ${ctx.from}`);
         
@@ -26,11 +26,7 @@ const createMessageFlow = () => {
         const currentState = state.getMyState() || {};
         const nodeData = currentState.nodeData || {};
         
-        // Logs informativos para debugging si es necesario (comentados para producción)
-        // logger.info(`[MessageFlow] currentState:`, Object.keys(currentState));
-        // logger.info(`[MessageFlow] nodeData.data?.message:`, nodeData.data?.message);
-        
-        // Obtener mensaje del nodo - CORREGIDO para buscar en nodeData.data.message
+        // Obtener mensaje del nodo
         let message = nodeData.data?.message || nodeData.message || nodeData.content || 'Mensaje sin contenido';
         
         // SOLUCIÓN: Cargar variables del sistema para el tenant
@@ -47,10 +43,10 @@ const createMessageFlow = () => {
           }
         }
         
-        // Reemplazar variables en el mensaje - SOLUCIÓN: Incluir variables del sistema
+        // Reemplazar variables en el mensaje
         const variables = {
-          ...systemVariables, // PRIMERO las variables del sistema
-          ...currentState.globalVars, // Luego las variables de contexto
+          ...systemVariables,
+          ...currentState.globalVars,
           nombre: currentState.globalVars?.name || currentState.globalVars?.lead_name || '',
           nombre_lead: currentState.globalVars?.lead_name || currentState.globalVars?.name || '',
           categoria_seleccionada: currentState.selectedCategory || '',
@@ -78,53 +74,61 @@ const createMessageFlow = () => {
         // Enviar mensaje al usuario
         await flowDynamic([message]);
         
-        // Si el nodo no espera respuesta, continuar automáticamente
-        if (!nodeData.waitForResponse) {
-          logger.info(`[MessageFlow] El nodo no espera respuesta, continuando...`);
+        // NAVEGACIÓN AUTOMÁTICA PARA NODOS QUE NO ESPERAN RESPUESTA
+        if (!nodeData.waitForResponse && !nodeData.capture) {
+          logger.info(`[MessageFlow] El nodo no espera respuesta, navegando automáticamente...`);
           
           // Determinar siguiente flujo basado en edges del nodo
           const nextEdge = nodeData.edges?.find(edge => edge.source === nodeData.id);
           if (nextEdge && nextEdge.targetNode) {
-            logger.info(`[MessageFlow] Navegando automáticamente al siguiente nodo: ${nextEdge.targetNode.type}`);
+            const nextNodeType = nextEdge.targetNode.type?.toLowerCase();
+            logger.info(`[MessageFlow] Navegando automáticamente a: ${nextEdge.targetNode.id} (${nextNodeType})`);
             
             // Actualizar estado con información del siguiente nodo
             await state.update({
               ...currentState,
               nodeData: nextEdge.targetNode,
-              previousNodeId: nodeData.id
+              previousNodeId: nodeData.id,
+              currentNodeId: nextEdge.targetNode.id
             });
             
-            // Simular navegación automática
-            setTimeout(async () => {
-              try {
-                const { gotoFlow } = await import('@builderbot/bot');
-                switch (nextEdge.targetNode.type?.toLowerCase()) {
-                  case 'categories':
-                  case 'categoriesnode':
-                    const CategoriesFlow = (await import('./CategoriesFlow')).default;
-                    return gotoFlow(CategoriesFlow);
-                  case 'products':
-                  case 'productsnode':
-                    const ProductsFlow = (await import('./ProductsFlow')).default;
-                    return gotoFlow(ProductsFlow);
-                  case 'input':
-                  case 'inputnode':
-                    const InputFlow = (await import('./InputFlow')).default;
-                    return gotoFlow(InputFlow);
-                  case 'buttons':
-                  case 'buttonsnode':
-                    const ButtonsFlow = (await import('./ButtonsFlow')).default;
-                    return gotoFlow(ButtonsFlow);
-                  default:
-                    logger.warn(`[MessageFlow] Tipo de nodo no reconocido: ${nextEdge.targetNode.type}`);
-                }
-              } catch (error) {
-                logger.error(`[MessageFlow] Error en navegación automática:`, error);
+            // Navegar según el tipo de nodo usando gotoFlow disponible en este contexto
+            try {
+              switch (nextNodeType) {
+                case 'categories':
+                case 'categoriesnode':
+                  const CategoriesFlow = (await import('./CategoriesFlow')).default;
+                  return gotoFlow(CategoriesFlow);
+                  
+                case 'products':
+                case 'productsnode':
+                  const ProductsFlow = (await import('./ProductsFlow')).default;
+                  return gotoFlow(ProductsFlow);
+                  
+                case 'buttons':
+                case 'buttonsnode':
+                  const ButtonsFlow = (await import('./ButtonsFlow')).default;
+                  return gotoFlow(ButtonsFlow);
+                  
+                case 'input':
+                case 'inputnode':
+                  const InputFlow = (await import('./InputFlow')).default;
+                  return gotoFlow(InputFlow);
+                  
+                case 'message':
+                case 'messagenode':
+                  // Para mensajes consecutivos, simplemente continúa en el mismo flujo
+                  return gotoFlow(createMessageFlow());
+                  
+                default:
+                  logger.warn(`[MessageFlow] Tipo de nodo no reconocido para navegación automática: ${nextNodeType}`);
               }
-            }, 100);
+            } catch (error) {
+              logger.error(`[MessageFlow] Error en navegación automática:`, error);
+            }
           }
         } else {
-          // Si espera respuesta, actualizar estado
+          // Si espera respuesta, actualizar estado para captura
           await state.update({
             ...currentState,
             awaitingResponse: true,

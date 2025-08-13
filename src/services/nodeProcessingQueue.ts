@@ -18,14 +18,14 @@
  */
 
 import logger from '../utils/logger';
-import DynamicNavigationService from './dynamicNavigation';
+// import DynamicNavigationService from './dynamicNavigation'; // TEMPORALMENTE DESHABILITADO
 import ImprovedSessionManager from './improvedSessionManager';
-import type { 
-  NavigationNode, 
-  NavigationContext, 
-  NavigationResult,
-  NavigationOptions 
-} from './dynamicNavigation';
+// import type { 
+//   NavigationNode, 
+//   NavigationContext, 
+//   NavigationResult,
+//   NavigationOptions 
+// } from './dynamicNavigation'; // TEMPORALMENTE DESHABILITADO
 
 // INTERFACES PARA SISTEMA DE COLA
 
