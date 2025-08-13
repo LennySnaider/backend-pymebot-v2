@@ -26,8 +26,12 @@ const createMessageFlow = () => {
         const currentState = state.getMyState() || {};
         const nodeData = currentState.nodeData || {};
         
-        // Obtener mensaje del nodo
-        let message = nodeData.message || nodeData.content || 'Mensaje sin contenido';
+        // Logs informativos para debugging si es necesario (comentados para producción)
+        // logger.info(`[MessageFlow] currentState:`, Object.keys(currentState));
+        // logger.info(`[MessageFlow] nodeData.data?.message:`, nodeData.data?.message);
+        
+        // Obtener mensaje del nodo - CORREGIDO para buscar en nodeData.data.message
+        let message = nodeData.data?.message || nodeData.message || nodeData.content || 'Mensaje sin contenido';
         
         // Reemplazar variables en el mensaje
         const variables = {

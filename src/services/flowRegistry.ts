@@ -44,7 +44,7 @@ interface HybridConfiguration {
 
 // CONFIGURACIÓN GLOBAL (POR DEFECTO HÍBRIDO DESHABILITADO PARA SEGURIDAD)
 let hybridConfig: HybridConfiguration = {
-  enableHybridRouting: true, // HABILITADO: Sistema híbrido para templates complejas
+  enableHybridRouting: false, // DESHABILITADO: Usar sistema actual hasta resolver template
   hybridFallbackEnabled: true,
   metricsEnabled: true,
   debugMode: true // HABILITADO: Para debugging y monitoring
