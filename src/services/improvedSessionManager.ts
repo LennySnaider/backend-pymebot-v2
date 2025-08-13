@@ -593,7 +593,9 @@ class ImprovedSessionManager {
       const expiredSessions: string[] = [];
 
       // 1. IDENTIFICAR SESIONES EXPIRADAS EN CACHÉ
-      for (const [sessionId, session] of this.sessionCache) {
+      // Obtener todas las sesiones del cache usando método temporal
+      const allSessions = await this.getAllSessionsFromCache();
+      for (const [sessionId, session] of allSessions) {
         if (this.isSessionExpired(session) || 
             this.isSessionInactive(session)) {
           expiredSessions.push(sessionId);
@@ -752,6 +754,27 @@ class ImprovedSessionManager {
   private isSessionInactive(session: PersistentSession): boolean {
     const inactiveThreshold = Date.now() - this.config.maxInactivityTime!;
     return new Date(session.lastActivityAt).getTime() < inactiveThreshold;
+  }
+
+  /**
+   * MÉTODO AUXILIAR: Obtener todas las sesiones del cache
+   * PROPÓSITO: Workaround temporal para iteración del cache
+   */
+  private async getAllSessionsFromCache(): Promise<Array<[string, PersistentSession]>> {
+    const sessions: Array<[string, PersistentSession]> = [];
+    
+    // Como SessionCache no expone método público para iterar,
+    // obtenemos las sesiones desde los índices de usuario
+    for (const [userId, sessionIds] of this.userSessionIndex) {
+      for (const sessionId of sessionIds) {
+        const session = await this.sessionCache.get(sessionId, userId);
+        if (session) {
+          sessions.push([sessionId, session]);
+        }
+      }
+    }
+    
+    return sessions;
   }
 
   private async loadSessionToCache(session: PersistentSession): Promise<void> {
