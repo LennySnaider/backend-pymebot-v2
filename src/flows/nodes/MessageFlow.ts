@@ -33,15 +33,31 @@ const createMessageFlow = () => {
         // Obtener mensaje del nodo - CORREGIDO para buscar en nodeData.data.message
         let message = nodeData.data?.message || nodeData.message || nodeData.content || 'Mensaje sin contenido';
         
-        // Reemplazar variables en el mensaje
+        // SOLUCIÓN: Cargar variables del sistema para el tenant
+        const tenantId = currentState.tenantId || currentState.metadata?.tenantId;
+        let systemVariables = {};
+        
+        if (tenantId) {
+          try {
+            const { getSystemVariablesForTenant } = await import('../../utils/systemVariablesLoader');
+            systemVariables = await getSystemVariablesForTenant(tenantId);
+            logger.debug(`[MessageFlow] Variables del sistema cargadas para tenant ${tenantId}:`, Object.keys(systemVariables));
+          } catch (error) {
+            logger.error(`[MessageFlow] Error cargando variables del sistema:`, error);
+          }
+        }
+        
+        // Reemplazar variables en el mensaje - SOLUCIÓN: Incluir variables del sistema
         const variables = {
-          ...currentState.globalVars,
+          ...systemVariables, // PRIMERO las variables del sistema
+          ...currentState.globalVars, // Luego las variables de contexto
           nombre: currentState.globalVars?.name || currentState.globalVars?.lead_name || '',
           nombre_lead: currentState.globalVars?.lead_name || currentState.globalVars?.name || '',
           categoria_seleccionada: currentState.selectedCategory || '',
           producto_seleccionado: currentState.selectedProduct || ''
         };
         
+        logger.debug(`[MessageFlow] Variables combinadas para reemplazo:`, Object.keys(variables));
         message = replaceVariables(message, variables);
         
         // IMPORTANTE: Procesar acciones del sales funnel si el nodo tiene salesStageId
@@ -80,22 +96,26 @@ const createMessageFlow = () => {
             
             // Simular navegación automática
             setTimeout(async () => {
-              const { gotoFlow } = require('@builderbot/bot');
-              switch (nextEdge.targetNode.type?.toLowerCase()) {
-                case 'categories':
-                case 'categoriesnode':
-                  const CategoriesFlow = require('./CategoriesFlow').default;
-                  return gotoFlow(CategoriesFlow);
-                case 'products':
-                case 'productsnode':
-                  const ProductsFlow = require('./ProductsFlow').default;
-                  return gotoFlow(ProductsFlow);
-                case 'input':
-                case 'inputnode':
-                  const InputFlow = require('./InputFlow').default;
-                  return gotoFlow(InputFlow);
-                default:
-                  logger.warn(`[MessageFlow] Tipo de nodo no reconocido: ${nextEdge.targetNode.type}`);
+              try {
+                const { gotoFlow } = await import('@builderbot/bot');
+                switch (nextEdge.targetNode.type?.toLowerCase()) {
+                  case 'categories':
+                  case 'categoriesnode':
+                    const CategoriesFlow = (await import('./CategoriesFlow')).default;
+                    return gotoFlow(CategoriesFlow);
+                  case 'products':
+                  case 'productsnode':
+                    const ProductsFlow = (await import('./ProductsFlow')).default;
+                    return gotoFlow(ProductsFlow);
+                  case 'input':
+                  case 'inputnode':
+                    const InputFlow = (await import('./InputFlow')).default;
+                    return gotoFlow(InputFlow);
+                  default:
+                    logger.warn(`[MessageFlow] Tipo de nodo no reconocido: ${nextEdge.targetNode.type}`);
+                }
+              } catch (error) {
+                logger.error(`[MessageFlow] Error en navegación automática:`, error);
               }
             }, 100);
           }
@@ -141,17 +161,21 @@ const createMessageFlow = () => {
           });
           
           // Navegar según el tipo de nodo
-          switch (nextEdge.targetNode.type?.toLowerCase()) {
-            case 'categories':
-            case 'categoriesnode':
-              const CategoriesFlow = require('./CategoriesFlow').default;
-              return gotoFlow(CategoriesFlow);
-            case 'products':
-            case 'productsnode':
-              const ProductsFlow = require('./ProductsFlow').default;
-              return gotoFlow(ProductsFlow);
-            default:
-              logger.warn(`[MessageFlow] Tipo de nodo no reconocido: ${nextEdge.targetNode.type}`);
+          try {
+            switch (nextEdge.targetNode.type?.toLowerCase()) {
+              case 'categories':
+              case 'categoriesnode':
+                const CategoriesFlow = (await import('./CategoriesFlow')).default;
+                return gotoFlow(CategoriesFlow);
+              case 'products':
+              case 'productsnode':
+                const ProductsFlow = (await import('./ProductsFlow')).default;
+                return gotoFlow(ProductsFlow);
+              default:
+                logger.warn(`[MessageFlow] Tipo de nodo no reconocido: ${nextEdge.targetNode.type}`);
+            }
+          } catch (error) {
+            logger.error(`[MessageFlow] Error importando flujo:`, error);
           }
         }
         

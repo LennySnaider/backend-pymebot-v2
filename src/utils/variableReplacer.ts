@@ -66,8 +66,12 @@ export function replaceVariables(
 ): string {
   if (!text) return '';
   
-  // Combinar variables por defecto con las proporcionadas
-  const allDefaults = { ...DEFAULT_VARIABLES, ...defaults };
+  logger.debug(`[variableReplacer] Reemplazando variables en texto: "${text.substring(0, 100)}..."`);
+  logger.debug(`[variableReplacer] Variables disponibles:`, Object.keys(variables));
+  
+  // SOLUCIÓN: Priorizar variables reales sobre defaults
+  // Combinar defaults PRIMERO, luego variables reales para que sobrescriban
+  const allVariables = { ...DEFAULT_VARIABLES, ...defaults, ...variables };
   
   // Reemplazar todas las variables de la forma {{variable}}
   return text.replace(/\{\{([^}]+)\}\}/g, (match, variableName) => {
@@ -84,23 +88,25 @@ export function replaceVariables(
       trimmedName.replace(/_([a-z])/g, (g) => g[1].toUpperCase())
     ];
     
-    // Buscar en las variables del usuario
+    // SOLUCIÓN: Buscar PRIMERO en variables reales (sistema), luego en defaults
     for (const name of possibleNames) {
-      if (variables[name] !== undefined) {
-        // Convertir a string (por si es un número u otro tipo)
+      if (variables[name] !== undefined && variables[name] !== null && variables[name] !== '') {
+        logger.debug(`[variableReplacer] Variable ${trimmedName} encontrada en variables reales: ${variables[name]}`);
         return String(variables[name]);
       }
     }
     
-    // Si no se encontró, buscar en los valores por defecto
+    // Solo si no está en variables reales, buscar en defaults + adicionales
     for (const name of possibleNames) {
-      if (allDefaults[name] !== undefined) {
-        return allDefaults[name];
+      const defaultValue = defaults[name] || DEFAULT_VARIABLES[name];
+      if (defaultValue !== undefined) {
+        logger.debug(`[variableReplacer] Variable ${trimmedName} usando valor por defecto: ${defaultValue}`);
+        return defaultValue;
       }
     }
     
     // Si no se encuentra en ningún lado, loggeamos y mantenemos la variable
-    logger.debug(`Variable no encontrada: ${trimmedName}`);
+    logger.debug(`[variableReplacer] Variable no encontrada: ${trimmedName}, manteniendo como ${match}`);
     return match; // Mantener sin cambios
   });
 }
