@@ -71,13 +71,10 @@ const createMessageFlow = () => {
           );
         }
         
-        // Enviar mensaje al usuario
+        // Enviar mensaje al usuario SIEMPRE
         await flowDynamic([message]);
         
-        // CORRECCIÓN: Verificar correctamente si debe esperar respuesta
-        // Si capture está explícitamente en false, NO debe esperar respuesta
-        // Si waitForResponse está explícitamente en false, NO debe esperar respuesta
-        // Por defecto, los nodos de mensaje SÍ esperan respuesta
+        // CORRECCIÓN CRÍTICA: Verificar si debe navegar automáticamente
         const shouldWaitForResponse = !(nodeData.data?.capture === false || 
                                       nodeData.capture === false || 
                                       nodeData.data?.waitForResponse === false || 
@@ -89,10 +86,12 @@ const createMessageFlow = () => {
           'capture': nodeData.capture,
           'data.waitForResponse': nodeData.data?.waitForResponse,
           'waitForResponse': nodeData.waitForResponse,
-          'shouldWaitForResponse': shouldWaitForResponse
+          'shouldWaitForResponse': shouldWaitForResponse,
+          'hasEdges': !!(nodeData.edges?.length),
+          'edgesCount': nodeData.edges?.length || 0
         });
 
-        
+        // NAVEGACIÓN AUTOMÁTICA: Solo si NO debe esperar respuesta
         if (!shouldWaitForResponse) {
           logger.info(`[MessageFlow] El nodo NO espera respuesta, navegando automáticamente...`);
           
@@ -100,17 +99,20 @@ const createMessageFlow = () => {
           const nextEdge = nodeData.edges?.find(edge => edge.source === nodeData.id);
           if (nextEdge && nextEdge.targetNode) {
             const nextNodeType = nextEdge.targetNode.type?.toLowerCase();
-            logger.info(`[MessageFlow] Navegando automáticamente a: ${nextEdge.targetNode.id} (${nextNodeType})`);
+            logger.info(`[MessageFlow] Edge encontrado - navegando automáticamente a: ${nextEdge.targetNode.id} (${nextNodeType})`);
             
             // Actualizar estado con información del siguiente nodo
             await state.update({
               ...currentState,
-              nodeData: nextEdge.targetNode,
+              nodeData: {
+                ...nextEdge.targetNode,
+                edges: nodeData.edges // Preservar edges para próximas navegaciones
+              },
               previousNodeId: nodeData.id,
               currentNodeId: nextEdge.targetNode.id
             });
             
-            // Navegar según el tipo de nodo usando gotoFlow disponible en este contexto
+            // Navegar según el tipo de nodo usando gotoFlow
             try {
               switch (nextNodeType) {
                 case 'categories':
@@ -141,18 +143,21 @@ const createMessageFlow = () => {
                   
                 default:
                   logger.warn(`[MessageFlow] Tipo de nodo no reconocido para navegación automática: ${nextNodeType}`);
+                  // Si no reconoce el tipo, continuar con el flujo normal sin captura
               }
             } catch (error) {
               logger.error(`[MessageFlow] Error en navegación automática:`, error);
             }
+          } else {
+            logger.warn(`[MessageFlow] No se encontró edge válido para navegación automática. nodeData.edges:`, nodeData.edges);
           }
           
-          // IMPORTANTE: Si no espera respuesta, terminar aquí sin .addAnswer
-          logger.info(`[MessageFlow] Terminando flujo sin capture para navegación automática`);
+          // IMPORTANTE: Si no espera respuesta y no pudo navegar, terminar el flujo aquí
+          logger.info(`[MessageFlow] Terminando flujo sin capture - mensaje enviado`);
           return;
         }
         
-        // Si llega aquí, sí debe esperar respuesta
+        // CONFIGURAR PARA ESPERAR RESPUESTA
         logger.info(`[MessageFlow] El nodo SÍ espera respuesta, configurando para capture...`);
         await state.update({
           ...currentState,
@@ -167,70 +172,70 @@ const createMessageFlow = () => {
         logger.error(`[MessageFlow] Error en addAction:`, error);
         await flowDynamic(['Ocurrió un error al mostrar el mensaje.']);
       }
-    });
-
-  // RETORNAR FLUJO CON CAPTURE POR DEFECTO
-  // La navegación automática se maneja en addAction con gotoFlow
-  return messageFlow.addAnswer('', { capture: true }, async (ctx, { state, gotoFlow }) => {
-    try {
-      logger.info(`[MessageFlow] Respuesta del usuario recibida: ${ctx.body}`);
-      
-      // Obtener estado actual en runtime
-      const currentState = state.getMyState() || {};
-      const nodeData = currentState.nodeData || {};
-      
-      // Actualizar estado
-      await state.update({
-        ...currentState,
-        awaitingResponse: false,
-        userResponse: ctx.body
-      });
-      
-      // Determinar siguiente flujo basado en edges del nodo
-      const nextEdge = nodeData.edges?.find(edge => edge.source === nodeData.id);
-      if (nextEdge && nextEdge.targetNode) {
-        logger.info(`[MessageFlow] Navegando al siguiente nodo: ${nextEdge.targetNode.type}`);
+    })
+    .addAnswer('', { capture: true }, async (ctx, { state, gotoFlow }) => {
+      try {
+        logger.info(`[MessageFlow] Respuesta del usuario recibida: ${ctx.body}`);
         
-        // Actualizar estado con información del siguiente nodo
+        // Obtener estado actual en runtime
+        const currentState = state.getMyState() || {};
+        const nodeData = currentState.nodeData || {};
+        
+        // Actualizar estado
         await state.update({
-          ...state.getMyState(),
-          nodeData: nextEdge.targetNode,
-          previousNodeId: nodeData.id,
-          currentNodeId: nextEdge.targetNode.id
+          ...currentState,
+          awaitingResponse: false,
+          userResponse: ctx.body
         });
         
-        // Navegar según el tipo de nodo
-        const nextNodeType = nextEdge.targetNode.type?.toLowerCase();
-        switch (nextNodeType) {
-          case 'categories':
-          case 'categoriesnode':
-            const CategoriesFlow = (await import('./CategoriesFlow')).default;
-            return gotoFlow(CategoriesFlow);
-          case 'products':
-          case 'productsnode':
-            const ProductsFlow = (await import('./ProductsFlow')).default;
-            return gotoFlow(ProductsFlow);
-          case 'buttons':
-          case 'buttonsnode':
-            const ButtonsFlow = (await import('./ButtonsFlow')).default;
-            return gotoFlow(ButtonsFlow);
-          case 'input':
-          case 'inputnode':
-            const InputFlow = (await import('./InputFlow')).default;
-            return gotoFlow(InputFlow);
-          case 'message':
-          case 'messagenode':
-            const MessageFlowModule = await import('./MessageFlow');
-            return gotoFlow(MessageFlowModule.default);
-          default:
-            logger.warn(`[MessageFlow] Tipo de nodo no reconocido: ${nextNodeType}`);
+        // Determinar siguiente flujo basado en edges del nodo
+        const nextEdge = nodeData.edges?.find(edge => edge.source === nodeData.id);
+        if (nextEdge && nextEdge.targetNode) {
+          logger.info(`[MessageFlow] Navegando al siguiente nodo después de respuesta: ${nextEdge.targetNode.type}`);
+          
+          // Actualizar estado con información del siguiente nodo
+          await state.update({
+            ...state.getMyState(),
+            nodeData: {
+              ...nextEdge.targetNode,
+              edges: nodeData.edges // Preservar edges
+            },
+            previousNodeId: nodeData.id,
+            currentNodeId: nextEdge.targetNode.id
+          });
+          
+          // Navegar según el tipo de nodo
+          const nextNodeType = nextEdge.targetNode.type?.toLowerCase();
+          switch (nextNodeType) {
+            case 'categories':
+            case 'categoriesnode':
+              const CategoriesFlow = (await import('./CategoriesFlow')).default;
+              return gotoFlow(CategoriesFlow);
+            case 'products':
+            case 'productsnode':
+              const ProductsFlow = (await import('./ProductsFlow')).default;
+              return gotoFlow(ProductsFlow);
+            case 'buttons':
+            case 'buttonsnode':
+              const ButtonsFlow = (await import('./ButtonsFlow')).default;
+              return gotoFlow(ButtonsFlow);
+            case 'input':
+            case 'inputnode':
+              const InputFlow = (await import('./InputFlow')).default;
+              return gotoFlow(InputFlow);
+            case 'message':
+            case 'messagenode':
+              const MessageFlowModule = await import('./MessageFlow');
+              return gotoFlow(MessageFlowModule.default);
+            default:
+              logger.warn(`[MessageFlow] Tipo de nodo no reconocido: ${nextNodeType}`);
+          }
         }
+        
+      } catch (error) {
+        logger.error(`[MessageFlow] Error en addAnswer:`, error);
       }
-      
-    } catch (error) {
-      logger.error(`[MessageFlow] Error en addAnswer:`, error);
-    }
-  });
+    });
 };
 
 // CORRECCIÓN: Exportar la función en lugar de ejecutarla inmediatamente para evitar dependencias circulares

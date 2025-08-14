@@ -39,11 +39,23 @@ export function createMainFlow(templateData: any, tenantId: string) {
         const initialNode = nodes[initialNodeId];
         logger.info(`[MainFlow] Nodo inicial determinado: ${initialNodeId} (${initialNode.type})`);
         
-        // Preparar información de edges para el nodo
+        // Preparar información de edges para el nodo - INCLUIR TODOS LOS EDGES
+        const allEdgesWithTargetNodes = edges.map(edge => ({
+          ...edge,
+          targetNode: nodes[edge.target]
+        }));
+        
         const nodeEdges = edges.filter(edge => edge.source === initialNodeId).map(edge => ({
           ...edge,
           targetNode: nodes[edge.target]
         }));
+        
+        logger.info(`[MainFlow] Edges preparados:`, {
+          totalEdges: edges.length,
+          nodeEdges: nodeEdges.length,
+          allEdgesCount: allEdgesWithTargetNodes.length,
+          nodeEdgesDetail: nodeEdges.map(e => ({ source: e.source, target: e.target, targetType: e.targetNode?.type }))
+        });
         
         // Inicializar estado global con estructura V1
         const initialState = {
@@ -52,7 +64,7 @@ export function createMainFlow(templateData: any, tenantId: string) {
           currentNodeId: initialNodeId,
           nodeData: {
             ...initialNode,
-            edges: nodeEdges
+            edges: allEdgesWithTargetNodes // CRÍTICO: Usar TODOS los edges con targetNodes
           },
           globalVars: {
             // Variables iniciales que pueden ser utilizadas por cualquier nodo
@@ -106,10 +118,7 @@ export function createMainFlow(templateData: any, tenantId: string) {
                 currentNodeId: nextEdge.targetNode.id,
                 nodeData: {
                   ...nextEdge.targetNode,
-                  edges: edges.filter(edge => edge.source === nextEdge.targetNode.id).map(edge => ({
-                    ...edge,
-                    targetNode: nodes[edge.target]
-                  }))
+                  edges: allEdgesWithTargetNodes // CRÍTICO: Usar TODOS los edges para permitir navegación
                 }
               });
               
