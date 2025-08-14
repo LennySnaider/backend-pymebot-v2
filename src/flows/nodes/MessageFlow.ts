@@ -117,29 +117,29 @@ const createMessageFlow = () => {
               switch (nextNodeType) {
                 case 'categories':
                 case 'categoriesnode':
-                  const CategoriesFlow = (await import('./CategoriesFlow')).default;
+                  const CategoriesFlow = require('./CategoriesFlow').default || require('./CategoriesFlow');
                   return gotoFlow(CategoriesFlow);
                   
                 case 'products':
                 case 'productsnode':
-                  const ProductsFlow = (await import('./ProductsFlow')).default;
+                  const ProductsFlow = require('./ProductsFlow').default || require('./ProductsFlow');
                   return gotoFlow(ProductsFlow);
                   
                 case 'buttons':
                 case 'buttonsnode':
-                  const ButtonsFlow = (await import('./ButtonsFlow')).default;
+                  const ButtonsFlow = require('./ButtonsFlow').default || require('./ButtonsFlow');
                   return gotoFlow(ButtonsFlow);
                   
                 case 'input':
                 case 'inputnode':
-                  const InputFlow = (await import('./InputFlow')).default;
+                  const InputFlow = require('./InputFlow').default || require('./InputFlow');
                   return gotoFlow(InputFlow);
                   
                 case 'message':
                 case 'messagenode':
-                  // CORRECCIÓN: Evitar dependencia circular usando import dinámico
-                  const MessageFlowModule = await import('./MessageFlow');
-                  return gotoFlow(MessageFlowModule.default);
+                  // CORRECCIÓN: Para nodos de mensaje, continúa sin capture en lugar de navegar circularmente
+                  logger.info(`[MessageFlow] Nodo de mensaje detectado, terminando flujo sin navegación circular`);
+                  return;
                   
                 default:
                   logger.warn(`[MessageFlow] Tipo de nodo no reconocido para navegación automática: ${nextNodeType}`);
@@ -209,24 +209,25 @@ const createMessageFlow = () => {
           switch (nextNodeType) {
             case 'categories':
             case 'categoriesnode':
-              const CategoriesFlow = (await import('./CategoriesFlow')).default;
+              const CategoriesFlow = require('./CategoriesFlow').default || require('./CategoriesFlow');
               return gotoFlow(CategoriesFlow);
             case 'products':
             case 'productsnode':
-              const ProductsFlow = (await import('./ProductsFlow')).default;
+              const ProductsFlow = require('./ProductsFlow').default || require('./ProductsFlow');
               return gotoFlow(ProductsFlow);
             case 'buttons':
             case 'buttonsnode':
-              const ButtonsFlow = (await import('./ButtonsFlow')).default;
+              const ButtonsFlow = require('./ButtonsFlow').default || require('./ButtonsFlow');
               return gotoFlow(ButtonsFlow);
             case 'input':
             case 'inputnode':
-              const InputFlow = (await import('./InputFlow')).default;
+              const InputFlow = require('./InputFlow').default || require('./InputFlow');
               return gotoFlow(InputFlow);
             case 'message':
             case 'messagenode':
-              const MessageFlowModule = await import('./MessageFlow');
-              return gotoFlow(MessageFlowModule.default);
+              // CORRECCIÓN: Para nodos de mensaje, no navegar circularmente
+              logger.info(`[MessageFlow] Nodo de mensaje detectado después de respuesta, terminando flujo`);
+              return;
             default:
               logger.warn(`[MessageFlow] Tipo de nodo no reconocido: ${nextNodeType}`);
           }

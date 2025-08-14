@@ -1043,8 +1043,8 @@ export async function processFlowMessageOriginal(
       logger.info(`[flowRegistry] 🎯 Enviando evento 'message' al provider con mensaje: "${messageBody}"`);
       provider.emit('message', messageWithMetadata);
       
-      // Esperar suficiente tiempo para que el bot procese flujos complejos
-      await new Promise(resolve => setTimeout(resolve, 800));
+      // Esperar suficiente tiempo para que el bot procese flujos complejos y navegación automática
+      await new Promise(resolve => setTimeout(resolve, 1500));
       
       // Restaurar el sendMessage original ANTES de verificar los mensajes
       provider.sendMessage = originalSendMessage;

@@ -101,9 +101,21 @@ export function createMainFlow(templateData: any, tenantId: string) {
             logger.error(`[MainFlow] No se encontró flujo modular para tipo: ${nodeType}`);
           }
         } else {
-          logger.info(`[MainFlow] Nodo tipo ${nodeType} no usa arquitectura modular, buscando siguiente nodo...`);
+          logger.info(`[MainFlow] Nodo tipo ${nodeType} no usa arquitectura modular, EJECUTANDO inmediatamente...`);
           
-          // Si el nodo inicial no es modular, buscar el primer nodo modular en la cadena
+          // CORRECCIÓN CRÍTICA: Si el nodo inicial no es modular pero existe, 
+          // ejecutarlo inmediatamente para que la navegación automática funcione
+          
+          // Verificar si es un mensaje que debe ejecutarse inmediatamente
+          if (nodeType === 'messagenode' || nodeType === 'message-node' || nodeType === 'message') {
+            logger.info(`[MainFlow] Ejecutando MessageFlow inmediatamente para nodo inicial: ${initialNodeId}`);
+            
+            // El estado ya está configurado, ir directamente al MessageFlow
+            const MessageFlowModule = await import('./nodes/MessageFlow');
+            return gotoFlow(MessageFlowModule.default);
+          }
+          
+          // Si no es un mensaje, buscar el primer nodo modular en la cadena
           const nextEdge = nodeEdges.find(edge => edge.targetNode);
           if (nextEdge && nextEdge.targetNode) {
             const nextNodeType = nextEdge.targetNode.type?.toLowerCase();
