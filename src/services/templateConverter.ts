@@ -871,6 +871,13 @@ async function buildFlowChain(
     const hasButtons = currentNode.data.buttons && Array.isArray(currentNode.data.buttons) && currentNode.data.buttons.length > 0;
     const hasOptions = currentNode.data.options && Array.isArray(currentNode.data.options) && currentNode.data.options.length > 0;
     const isInteractiveNodeType = ['buttonsNode', 'buttons-node', 'inputNode', 'input-node', 'categories', 'categoriesNode', 'products', 'productsNode', 'listNode', 'list-node'].includes(currentNode.type);
+    const isMessageNode = ['messageNode', 'message-node', 'message'].includes(currentNode.type);
+    
+    // CORRECCIÓN CRÍTICA: Los nodos de mensaje DEBEN esperar respuesta por defecto
+    if (isMessageNode && currentNode.data.waitForResponse === undefined) {
+      logger.info(`🔧 CORRECCIÓN CRÍTICA: Nodo mensaje ${nodeId} (${currentNode.type}) sin waitForResponse definido. Estableciendo waitForResponse=true por defecto.`);
+      currentNode.data.waitForResponse = true;
+    }
     
     // Si es un nodo interactivo y no tiene waitForResponse definido, añadirlo
     if (isInteractiveNodeType && currentNode.data.waitForResponse === undefined) {

@@ -74,9 +74,27 @@ const createMessageFlow = () => {
         // Enviar mensaje al usuario
         await flowDynamic([message]);
         
-        // NAVEGACIÓN AUTOMÁTICA PARA NODOS QUE NO ESPERAN RESPUESTA
-        if (!nodeData.waitForResponse && !nodeData.capture) {
-          logger.info(`[MessageFlow] El nodo no espera respuesta, navegando automáticamente...`);
+        // CORRECCIÓN: Verificar correctamente si debe esperar respuesta
+        // Si capture está explícitamente en false, NO debe esperar respuesta
+        // Si waitForResponse está explícitamente en false, NO debe esperar respuesta
+        // Por defecto, los nodos de mensaje SÍ esperan respuesta
+        const shouldWaitForResponse = !(nodeData.data?.capture === false || 
+                                      nodeData.capture === false || 
+                                      nodeData.data?.waitForResponse === false || 
+                                      nodeData.waitForResponse === false);
+
+        logger.info(`[MessageFlow] Configuración del nodo:`, {
+          nodeId: nodeData.id,
+          'data.capture': nodeData.data?.capture,
+          'capture': nodeData.capture,
+          'data.waitForResponse': nodeData.data?.waitForResponse,
+          'waitForResponse': nodeData.waitForResponse,
+          'shouldWaitForResponse': shouldWaitForResponse
+        });
+
+        // NAVEGACIÓN AUTOMÁTICA SOLO SI EXPLÍCITAMENTE NO ESPERA RESPUESTA
+        if (!shouldWaitForResponse) {
+          logger.info(`[MessageFlow] El nodo NO espera respuesta, navegando automáticamente...`);
           
           // Determinar siguiente flujo basado en edges del nodo
           const nextEdge = nodeData.edges?.find(edge => edge.source === nodeData.id);
@@ -117,8 +135,9 @@ const createMessageFlow = () => {
                   
                 case 'message':
                 case 'messagenode':
-                  // Para mensajes consecutivos, simplemente continúa en el mismo flujo
-                  return gotoFlow(createMessageFlow());
+                  // CORRECCIÓN: Evitar dependencia circular usando import dinámico
+                  const MessageFlowModule = await import('./MessageFlow');
+                  return gotoFlow(MessageFlowModule.default);
                   
                 default:
                   logger.warn(`[MessageFlow] Tipo de nodo no reconocido para navegación automática: ${nextNodeType}`);
@@ -128,12 +147,15 @@ const createMessageFlow = () => {
             }
           }
         } else {
-          // Si espera respuesta, actualizar estado para captura
+          // CORRECCIÓN: Si espera respuesta, configurar estado para captura
+          logger.info(`[MessageFlow] El nodo ESPERA respuesta. Configurando estado para captura...`);
           await state.update({
             ...currentState,
             awaitingResponse: true,
             currentNodeType: 'message',
-            currentNodeId: nodeData.id
+            currentNodeId: nodeData.id,
+            lastMessageSent: message,
+            waitingForUserInput: true
           });
         }
         
@@ -197,4 +219,6 @@ const createMessageFlow = () => {
     });
 };
 
-export default createMessageFlow();
+// CORRECCIÓN: Exportar la función en lugar de ejecutarla inmediatamente para evitar dependencias circulares
+const MessageFlow = createMessageFlow();
+export default MessageFlow;
