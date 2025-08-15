@@ -149,15 +149,18 @@ const createProductsFlow = () => {
           switch (nextEdge.targetNode.type?.toLowerCase()) {
             case 'message':
             case 'messagenode':
-              const MessageFlow = require('./MessageFlow').default;
+              const MessageModule = await import('./MessageFlow');
+              const MessageFlow = MessageModule.default || MessageModule;
               return gotoFlow(MessageFlow);
             case 'input':
             case 'inputnode':
-              const InputFlow = require('./InputFlow').default;
+              const InputModule = await import('./InputFlow');
+              const InputFlow = InputModule.default || InputModule;
               return gotoFlow(InputFlow);
             case 'ai':
             case 'ainode':
-              const AIFlow = require('./AIFlow').default;
+              const AIModule = await import('./AIFlow');
+              const AIFlow = AIModule.default || AIModule;
               return gotoFlow(AIFlow);
             default:
               logger.warn(`[ProductsFlow] Tipo de nodo no reconocido: ${nextEdge.targetNode.type}`);

@@ -144,11 +144,13 @@ const createCategoriesFlow = () => {
             case 'products':
             case 'productsnode':
             case 'products-node':
-              const ProductsFlow = require('./ProductsFlow').default;
+              const ProductsModule = await import('./ProductsFlow');
+              const ProductsFlow = ProductsModule.default || ProductsModule;
               return gotoFlow(ProductsFlow);
             case 'message':
             case 'messagenode':
-              const MessageFlow = require('./MessageFlow').default;
+              const MessageModule = await import('./MessageFlow');
+              const MessageFlow = MessageModule.default || MessageModule;
               return gotoFlow(MessageFlow);
             default:
               logger.warn(`[CategoriesFlow] Tipo de nodo no reconocido: ${nextEdge.targetNode.type}`);

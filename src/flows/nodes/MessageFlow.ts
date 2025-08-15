@@ -117,22 +117,26 @@ const createMessageFlow = () => {
               switch (nextNodeType) {
                 case 'categories':
                 case 'categoriesnode':
-                  const CategoriesFlow = require('./CategoriesFlow').default || require('./CategoriesFlow');
+                  const CategoriesModule = await import('./CategoriesFlow');
+                  const CategoriesFlow = CategoriesModule.default || CategoriesModule;
                   return gotoFlow(CategoriesFlow);
                   
                 case 'products':
                 case 'productsnode':
-                  const ProductsFlow = require('./ProductsFlow').default || require('./ProductsFlow');
+                  const ProductsModule = await import('./ProductsFlow');
+                  const ProductsFlow = ProductsModule.default || ProductsModule;
                   return gotoFlow(ProductsFlow);
                   
                 case 'buttons':
                 case 'buttonsnode':
-                  const ButtonsFlow = require('./ButtonsFlow').default || require('./ButtonsFlow');
+                  const ButtonsModule = await import('./ButtonsFlow');
+                  const ButtonsFlow = ButtonsModule.default || ButtonsModule;
                   return gotoFlow(ButtonsFlow);
                   
                 case 'input':
                 case 'inputnode':
-                  const InputFlow = require('./InputFlow').default || require('./InputFlow');
+                  const InputModule = await import('./InputFlow');
+                  const InputFlow = InputModule.default || InputModule;
                   return gotoFlow(InputFlow);
                   
                 case 'message':
@@ -209,20 +213,24 @@ const createMessageFlow = () => {
           switch (nextNodeType) {
             case 'categories':
             case 'categoriesnode':
-              const CategoriesFlow = require('./CategoriesFlow').default || require('./CategoriesFlow');
-              return gotoFlow(CategoriesFlow);
+              const CategoriesModule2 = await import('./CategoriesFlow');
+              const CategoriesFlow2 = CategoriesModule2.default || CategoriesModule2;
+              return gotoFlow(CategoriesFlow2);
             case 'products':
             case 'productsnode':
-              const ProductsFlow = require('./ProductsFlow').default || require('./ProductsFlow');
-              return gotoFlow(ProductsFlow);
+              const ProductsModule2 = await import('./ProductsFlow');
+              const ProductsFlow2 = ProductsModule2.default || ProductsModule2;
+              return gotoFlow(ProductsFlow2);
             case 'buttons':
             case 'buttonsnode':
-              const ButtonsFlow = require('./ButtonsFlow').default || require('./ButtonsFlow');
-              return gotoFlow(ButtonsFlow);
+              const ButtonsModule2 = await import('./ButtonsFlow');
+              const ButtonsFlow2 = ButtonsModule2.default || ButtonsModule2;
+              return gotoFlow(ButtonsFlow2);
             case 'input':
             case 'inputnode':
-              const InputFlow = require('./InputFlow').default || require('./InputFlow');
-              return gotoFlow(InputFlow);
+              const InputModule2 = await import('./InputFlow');
+              const InputFlow2 = InputModule2.default || InputModule2;
+              return gotoFlow(InputFlow2);
             case 'message':
             case 'messagenode':
               // CORRECCIÓN: Para nodos de mensaje, no navegar circularmente
