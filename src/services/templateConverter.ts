@@ -1579,6 +1579,34 @@ export async function convertTemplateToBuilderbotFlow(
   sessionId?: string
 ): Promise<FlowConversionResult> {
   try {
+    // INTERCEPTACIÓN: Templates problemáticas conocidas
+    const problematicTemplateIds = [
+      "d5e05ba1-0146-4587-860b-4e984dd0b672", // PymeBot V1 - Agendamiento Completo
+      "b8ec193d-de62-4e82-b0ff-858ad27f9368", // Flujo de Servicios (Activo)
+    ];
+
+    if (problematicTemplateIds.includes(templateId)) {
+      logger.info(`🔄 [INTERCEPCIÓN] Detectada plantilla problemática: ${templateId}`);
+      
+      try {
+        const { welcomeFlow, mainFlow } = await import(
+          "../flows/simple-working-flow.cjs"
+        );
+        const functionalFlow = createFlow([welcomeFlow, mainFlow]);
+        
+        logger.info(`✅ [INTERCEPCIÓN] Flujo funcional cargado para template: ${templateId}`);
+        
+        return {
+          flow: functionalFlow,
+          entryKeywords: ['INICIO', 'inicio', 'START', 'start', 'hola', 'hi', 'hello'],
+          nodeMap: {} // En flujo interceptado, el nodeMap no es relevante
+        };
+      } catch (error) {
+        logger.error(`❌ [INTERCEPCIÓN] Error cargando flujo funcional:`, error);
+        // Continuar con conversión normal como fallback
+      }
+    }
+
     // USAR VERSIÓN HÍBRIDA POR DEFECTO
     const hybridResult = await convertTemplateToBuilderbotFlowWithHybridRouting(
       templateId, 
